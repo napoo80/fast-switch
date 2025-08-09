@@ -1,13 +1,11 @@
-// HotkeyApp.swift
 import SwiftUI
 
 @main
-struct HotkeyApp: App {
+struct FastSwitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Settings {
-            EmptyView()
-        }
+        Settings { EmptyView() } // No ventanas
     }
 }
+
