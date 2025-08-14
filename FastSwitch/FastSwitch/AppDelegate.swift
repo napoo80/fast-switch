@@ -2,6 +2,46 @@ import Cocoa
 import Carbon.HIToolbox
 import ApplicationServices
 import UserNotifications
+import Foundation
+import UniformTypeIdentifiers
+
+// MARK: - Data Structures for Persistent Storage
+struct SessionRecord: Codable {
+    let start: Date
+    let duration: TimeInterval
+}
+
+struct DailyUsageData: Codable {
+    let date: Date
+    var totalSessionTime: TimeInterval
+    var appUsage: [String: TimeInterval]
+    var breaksTaken: [SessionRecord]
+    var continuousWorkSessions: [SessionRecord]
+    var deepFocusSessions: [SessionRecord]
+    var longestContinuousSession: TimeInterval
+    var totalBreakTime: TimeInterval
+    var callTime: TimeInterval
+    
+    init(date: Date) {
+        self.date = date
+        self.totalSessionTime = 0
+        self.appUsage = [:]
+        self.breaksTaken = []
+        self.continuousWorkSessions = []
+        self.deepFocusSessions = []
+        self.longestContinuousSession = 0
+        self.totalBreakTime = 0
+        self.callTime = 0
+    }
+}
+
+struct UsageHistory: Codable {
+    var dailyData: [String: DailyUsageData]
+    
+    init() {
+        self.dailyData = [:]
+    }
+}
 
 // MARK: - Carbon hotkey callback
 private func hotKeyHandler(_ nextHandler: EventHandlerCallRef?,
@@ -59,6 +99,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // Deep Focus: guardá el último ID para poder limpiarlo (bugfix)
     private var lastDeepFocusNotificationID: String?
     
+    // App tracking and dashboard
+    private var currentFrontApp: String?
+    private var appUsageToday: [String: TimeInterval] = [:]
+    private var lastAppCheckTime: Date = Date()
+    private var dashboardTimer: Timer?
+    private var hasShownDashboardToday: Bool = false
+    
+    // Break and continuous session tracking
+    private var breaksTaken: [SessionRecord] = []
+    private var continuousWorkSessions: [SessionRecord] = []
+    private var currentContinuousSessionStart: Date?
+    private var isCurrentlyOnBreak: Bool = false
+    private var breakStartTime: Date?
+    private var longestContinuousSession: TimeInterval = 0
+    private var totalBreakTime: TimeInterval = 0
+    
     // Configuration
     private let idleThreshold: TimeInterval = 300 // 5 minutes
     private let callIdleThreshold: TimeInterval = 1800 // 30 minutes
@@ -71,6 +127,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         case testing, interval45, interval60, interval90, disabled
     }
     private var currentNotificationMode: NotificationMode = .testing
+    
+    // Persistent storage
+    private var usageHistory: UsageHistory = UsageHistory()
+    private let usageHistoryKey = "FastSwitchUsageHistory"
+    private var currentDayCallTime: TimeInterval = 0
+    private var callStartTime: Date?
+    private var deepFocusSessionStartTime: Date?
+    
+    // Break timer system
+    private var breakTimer: Timer?
+    private var breakTimerStartTime: Date?
+    private var isBreakTimerActive: Bool = false
+    private var customFocusDuration: TimeInterval = 3600 // Default 60 minutes
 
     // F-keys → apps/acciones
     private let mapping: [UInt32: String] = [
@@ -122,7 +191,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         deepFocusItem.tag = 102
         menu.addItem(deepFocusItem)
         
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "🔄 Reiniciar sesión", action: #selector(resetSession), keyEquivalent: ""))
+        
+        // Reports submenu
+        let reportsMenu = NSMenu()
+        let reportsItem = NSMenuItem(title: "📊 Reportes", action: nil, keyEquivalent: "")
+        reportsItem.submenu = reportsMenu
+        
+        reportsMenu.addItem(NSMenuItem(title: "📊 Ver Dashboard Diario", action: #selector(showDashboardManually), keyEquivalent: ""))
+        reportsMenu.addItem(NSMenuItem(title: "📈 Reporte Semanal", action: #selector(showWeeklyReport), keyEquivalent: ""))
+        reportsMenu.addItem(NSMenuItem(title: "📅 Reporte Anual", action: #selector(showYearlyReport), keyEquivalent: ""))
+        reportsMenu.addItem(NSMenuItem.separator())
+        reportsMenu.addItem(NSMenuItem(title: "💾 Exportar Datos", action: #selector(exportUsageData), keyEquivalent: ""))
+        
+        menu.addItem(reportsItem)
         menu.addItem(NSMenuItem.separator())
         
         // Configuration submenu
@@ -169,6 +252,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Start usage tracking
         startUsageTracking()
         
+        // Initialize app tracking
+        currentFrontApp = getCurrentFrontApp()
+        lastAppCheckTime = Date()
+        
+        // Initialize session tracking
+        currentContinuousSessionStart = Date()
+        
+        // Load usage history
+        loadUsageHistory()
+        
+        // Initialize today's data if needed
+        initializeTodayData()
+        
+        // Schedule daily dashboard
+        scheduleDailyDashboard()
+        
         // Auto-enable testing mode for now
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.setNotificationIntervalTest()
@@ -190,11 +289,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     func applicationWillTerminate(_ notification: Notification) { 
+        // Save today's data before terminating
+        saveTodayData()
+        saveUsageHistory()
+        
         unregisterHotkeys()
         stopUsageTracking()
         deepFocusTimer?.invalidate()
         deepFocusNotificationTimer?.invalidate()
         stickyBreakTimer?.invalidate()
+        dashboardTimer?.invalidate()
+        breakTimer?.invalidate()
     }
 
     private func registerHotkeys() {
@@ -392,9 +497,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Enable Do Not Disturb in Slack
         enableSlackDND()
         
-        // Start 60-minute timer
+        // Start timer with custom duration
         deepFocusStartTime = Date()
-        deepFocusTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
+        deepFocusSessionStartTime = Date()
+        deepFocusTimer = Timer.scheduledTimer(withTimeInterval: customFocusDuration, repeats: false) { [weak self] _ in
             self?.showDeepFocusCompletionNotification()
         }
         
@@ -426,11 +532,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Disable Do Not Disturb in Slack
         disableSlackDND()
         
-        // Calculate session duration
-        let sessionDuration = deepFocusStartTime.map { Date().timeIntervalSince($0) } ?? 0
-        let minutes = Int(sessionDuration / 60)
+        // Calculate session duration and save it
+        if let startTime = deepFocusSessionStartTime {
+            let sessionDuration = Date().timeIntervalSince(startTime)
+            let minutes = Int(sessionDuration / 60)
+            
+            // Save deep focus session to today's data
+            let todayKey = getTodayKey()
+            if var todayData = usageHistory.dailyData[todayKey] {
+                todayData.deepFocusSessions.append(SessionRecord(start: startTime, duration: sessionDuration))
+                usageHistory.dailyData[todayKey] = todayData
+                saveUsageHistory()
+            }
+            
+            print("✅ FastSwitch: Deep Focus desactivado - DND off macOS + Slack (duración: \(minutes)min)")
+            deepFocusSessionStartTime = nil
+        }
         
-        print("✅ FastSwitch: Deep Focus desactivado - DND off macOS + Slack (duración: \(minutes)min)")
         deepFocusStartTime = nil
     }
     
@@ -541,29 +659,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         content.categoryIdentifier = "DEEP_FOCUS_COMPLETE"
         
         // Add action buttons
-        let continueAction = UNNotificationAction(
-            identifier: "CONTINUE_FOCUS_ACTION",
-            title: "🧘 Continue Focusing",
+        let focusAnotherHourAction = UNNotificationAction(
+            identifier: "FOCUS_ANOTHER_HOUR_ACTION",
+            title: "🧘 Focus Another Hour",
             options: []
         )
         
-        let takeBreakAction = UNNotificationAction(
-            identifier: "TAKE_BREAK_ACTION",
-            title: "☕ Take a Break",
+        let take15BreakAction = UNNotificationAction(
+            identifier: "TAKE_15MIN_BREAK_ACTION",
+            title: "☕ Take 15min Break",
             options: []
         )
         
-        let dismissAction = UNNotificationAction(
-            identifier: "DISMISS_FOCUS_ACTION",
-            title: "✅ Got it!",
+        let showSessionStatsAction = UNNotificationAction(
+            identifier: "SHOW_SESSION_STATS_ACTION",
+            title: "📊 Show Session Stats",
+            options: [.foreground]
+        )
+        
+        let setCustomFocusAction = UNNotificationAction(
+            identifier: "SET_CUSTOM_FOCUS_ACTION",
+            title: "🎯 Custom Focus Time",
             options: []
         )
         
         let category = UNNotificationCategory(
             identifier: "DEEP_FOCUS_COMPLETE",
-            actions: [continueAction, takeBreakAction, dismissAction],
+            actions: [focusAnotherHourAction, take15BreakAction, showSessionStatsAction, setCustomFocusAction],
             intentIdentifiers: [],
-            options: [.customDismissAction]
+            options: []
         )
         
         UNUserNotificationCenter.current().setNotificationCategories([category])
@@ -598,6 +722,134 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
             lastDeepFocusNotificationID = nil
         }
+    }
+    
+    // MARK: - Break Timer System
+    private func startBreakTimer(duration: TimeInterval = 900) { // Default 15 minutes
+        stopBreakTimer() // Stop any existing timer
+        
+        isBreakTimerActive = true
+        breakTimerStartTime = Date()
+        
+        print("☕ FastSwitch: Iniciando timer de descanso - \(Int(duration / 60))min")
+        
+        breakTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+            self?.showBreakTimerCompleteNotification()
+        }
+        
+        // Update menu to show break timer status
+        updateMenuItems(sessionDuration: getCurrentSessionDuration())
+    }
+    
+    private func stopBreakTimer() {
+        breakTimer?.invalidate()
+        breakTimer = nil
+        isBreakTimerActive = false
+        breakTimerStartTime = nil
+        print("⏹️ FastSwitch: Timer de descanso detenido")
+        
+        // Update menu
+        updateMenuItems(sessionDuration: getCurrentSessionDuration())
+    }
+    
+    private func getBreakTimerRemaining() -> TimeInterval {
+        guard let startTime = breakTimerStartTime, isBreakTimerActive else { return 0 }
+        let elapsed = Date().timeIntervalSince(startTime)
+        return max(0, 900 - elapsed) // Assuming 15min default
+    }
+    
+    private func showBreakTimerCompleteNotification() {
+        print("⏰ FastSwitch: Timer de descanso completado")
+        isBreakTimerActive = false
+        breakTimerStartTime = nil
+        
+        let content = UNMutableNotificationContent()
+        content.title = "☕ Break Time Complete!"
+        content.body = "🎉 Your break is over!\n\n🏃 Ready to get back to work?\n\n💪 You've got this!"
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("Blow.aiff"))
+        content.badge = 1
+        content.interruptionLevel = .timeSensitive
+        content.categoryIdentifier = "BREAK_TIMER_COMPLETE"
+        
+        // Add action buttons
+        let backToWorkAction = UNNotificationAction(
+            identifier: "BACK_TO_WORK_ACTION",
+            title: "🏃 Back to Work",
+            options: []
+        )
+        
+        let extendBreakAction = UNNotificationAction(
+            identifier: "EXTEND_BREAK_ACTION",
+            title: "☕ +5 Minutes",
+            options: []
+        )
+        
+        let showDashboardAction = UNNotificationAction(
+            identifier: "SHOW_DASHBOARD_ACTION",
+            title: "📊 Show Dashboard",
+            options: [.foreground]
+        )
+        
+        let category = UNNotificationCategory(
+            identifier: "BREAK_TIMER_COMPLETE",
+            actions: [backToWorkAction, extendBreakAction, showDashboardAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+        
+        let request = UNNotificationRequest(
+            identifier: "break-timer-complete-\(Int(Date().timeIntervalSince1970))",
+            content: content,
+            trigger: nil
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error enviando notificación break timer: \(error)")
+            } else {
+                print("✅ FastSwitch: Notificación break timer enviada")
+            }
+        }
+    }
+    
+    // MARK: - Custom Focus Duration
+    private func setCustomFocusDuration(_ duration: TimeInterval) {
+        customFocusDuration = duration
+        print("🎯 FastSwitch: Duración personalizada de focus configurada: \(Int(duration / 60))min")
+    }
+    
+    private func startCustomFocusSession(duration: TimeInterval) {
+        setCustomFocusDuration(duration)
+        
+        // If deep focus is already active, restart with new duration
+        if isDeepFocusEnabled {
+            disableDeepFocus()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.enableDeepFocus()
+            }
+        } else {
+            enableDeepFocus()
+        }
+    }
+    
+    private func showCustomFocusDurationOptions() {
+        // For now, we'll provide some preset options
+        // In a full implementation, this could show a more complex UI
+        let options = [
+            (duration: 1800.0, title: "30 minutes"),   // 30 min
+            (duration: 2700.0, title: "45 minutes"),   // 45 min  
+            (duration: 3600.0, title: "60 minutes"),   // 60 min
+            (duration: 5400.0, title: "90 minutes"),   // 90 min
+            (duration: 7200.0, title: "120 minutes")   // 120 min
+        ]
+        
+        // For simplicity, default to 45 minutes for now
+        // In a full implementation, this could show a selection UI
+        startCustomFocusSession(duration: 2700) // 45 minutes
+        
+        print("🎯 FastSwitch: Iniciando sesión personalizada de 45 minutos")
     }
 
     // MARK: - Insta360 Link Controller (F7 → ⌥T)
@@ -731,6 +983,79 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     @objc private func quit() { NSApp.terminate(nil) }
     
+    // MARK: - Persistent Storage
+    private func loadUsageHistory() {
+        if let data = UserDefaults.standard.data(forKey: usageHistoryKey),
+           let history = try? JSONDecoder().decode(UsageHistory.self, from: data) {
+            usageHistory = history
+            print("📂 FastSwitch: Historial de uso cargado - \(history.dailyData.count) días")
+        } else {
+            usageHistory = UsageHistory()
+            print("📂 FastSwitch: Iniciando nuevo historial de uso")
+        }
+    }
+    
+    private func saveUsageHistory() {
+        do {
+            let data = try JSONEncoder().encode(usageHistory)
+            UserDefaults.standard.set(data, forKey: usageHistoryKey)
+            print("💾 FastSwitch: Historial guardado - \(usageHistory.dailyData.count) días")
+        } catch {
+            print("❌ FastSwitch: Error guardando historial: \(error)")
+        }
+    }
+    
+    private func getTodayKey() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
+    }
+    
+    private func initializeTodayData() {
+        let todayKey = getTodayKey()
+        if usageHistory.dailyData[todayKey] == nil {
+            usageHistory.dailyData[todayKey] = DailyUsageData(date: Date())
+            print("📅 FastSwitch: Inicializando datos para hoy: \(todayKey)")
+        }
+    }
+    
+    private func saveTodayData() {
+        let todayKey = getTodayKey()
+        guard var todayData = usageHistory.dailyData[todayKey] else {
+            print("⚠️ FastSwitch: No hay datos de hoy para guardar")
+            return
+        }
+        
+        // Update today's data with current session info
+        todayData.totalSessionTime = getCurrentSessionDuration()
+        todayData.appUsage = appUsageToday
+        todayData.breaksTaken = breaksTaken
+        todayData.continuousWorkSessions = continuousWorkSessions
+        todayData.longestContinuousSession = longestContinuousSession
+        todayData.totalBreakTime = totalBreakTime
+        todayData.callTime = currentDayCallTime
+        
+        // Add current deep focus session if active
+        if isDeepFocusEnabled, let startTime = deepFocusStartTime {
+            let duration = Date().timeIntervalSince(startTime)
+            todayData.deepFocusSessions.append(SessionRecord(start: startTime, duration: duration))
+        }
+        
+        // Add current continuous session if active
+        if let sessionStart = currentContinuousSessionStart {
+            let duration = Date().timeIntervalSince(sessionStart)
+            todayData.continuousWorkSessions.append(SessionRecord(start: sessionStart, duration: duration))
+            if duration > todayData.longestContinuousSession {
+                todayData.longestContinuousSession = duration
+            }
+        }
+        
+        usageHistory.dailyData[todayKey] = todayData
+        saveUsageHistory()
+        
+        print("💾 FastSwitch: Datos de hoy guardados")
+    }
+    
     // MARK: - Usage Tracking
     private func requestNotificationPermissions() {
         print("🔔 FastSwitch: Solicitando permisos de notificación...")
@@ -774,6 +1099,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let minIdleTime = min(idleTime, keyboardIdleTime)
         let currentTime = Date()
         
+        // Track app usage
+        trackAppUsage()
+        
         // Check if user is in a call
         updateCallStatus()
         
@@ -784,10 +1112,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         print("📞 FastSwitch: En llamada: \(isInCall) (manual: \(manualCallToggle))")
         print("⏰ FastSwitch: Sesión actual: \(Int(sessionDuration))s (\(Int(sessionDuration/60))min)")
         
+        // Debug: Next notification countdown
+        debugNextNotificationCountdown(sessionDuration: sessionDuration)
+        
+        if let frontApp = currentFrontApp {
+            print("📱 FastSwitch: App frontal: \(frontApp)")
+        }
+        
         if minIdleTime < effectiveIdleThreshold {
             // User is active
             lastActivityTime = currentTime
             print("✅ FastSwitch: Usuario activo (umbral: \(Int(effectiveIdleThreshold))s)")
+            
+            // Handle continuous session tracking
+            if isCurrentlyOnBreak {
+                // User was on break and is now active - end break
+                endBreak()
+            }
+            
+            if currentContinuousSessionStart == nil {
+                // Start new continuous session
+                startContinuousSession()
+            }
             
             // Calculate session time and check for notifications
             if let startTime = sessionStartTime {
@@ -796,12 +1142,81 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 updateStatusBarTitle(sessionDuration: sessionDuration)
             }
         } else {
-            // User is idle - could pause session tracking if desired
+            // User is idle - start break if not already on one
             print("😴 FastSwitch: Usuario inactivo (umbral: \(Int(effectiveIdleThreshold))s)")
+            
+            if !isCurrentlyOnBreak {
+                startBreak()
+            }
+            
             updateStatusBarTitle(sessionDuration: getCurrentSessionDuration())
         }
         
+        // Periodic data saving (every minute when user is active)
+        if Int(sessionDuration) % 60 == 0 && Int(sessionDuration) > 0 {
+            saveTodayData()
+        }
+        
         print("---")
+    }
+    
+    private func debugNextNotificationCountdown(sessionDuration: TimeInterval) {
+        guard notificationsEnabled else {
+            print("🔕 DEBUG: Notificaciones deshabilitadas")
+            return
+        }
+        
+        // Find next notification interval
+        var nextNotification: TimeInterval?
+        var nextIndex: Int?
+        
+        for (index, interval) in notificationIntervals.enumerated() {
+            if !sentNotificationIntervals.contains(interval) && sessionDuration < interval {
+                nextNotification = interval
+                nextIndex = index
+                break
+            }
+        }
+        
+        if let next = nextNotification, let index = nextIndex {
+            let timeLeft = next - sessionDuration
+            let minutesLeft = Int(timeLeft / 60)
+            let secondsLeft = Int(timeLeft.truncatingRemainder(dividingBy: 60))
+            
+            print("🔔 DEBUG: Próxima notificación #\(index + 1) en \(minutesLeft):\(String(format: "%02d", secondsLeft)) (intervalo: \(Int(next/60))min)")
+            
+            // Show progress bar in debug
+            let progress = sessionDuration / next
+            let progressBars = Int(progress * 20) // 20 character progress bar
+            let progressString = String(repeating: "█", count: progressBars) + String(repeating: "░", count: 20 - progressBars)
+            print("📊 DEBUG: Progreso [\(progressString)] \(Int(progress * 100))%")
+        } else {
+            // Check if all notifications have been sent
+            let allSent = notificationIntervals.allSatisfy { sentNotificationIntervals.contains($0) }
+            if allSent {
+                print("✅ DEBUG: Todas las notificaciones enviadas para esta sesión")
+            } else {
+                print("⚠️ DEBUG: No hay próximas notificaciones programadas")
+            }
+        }
+        
+        // Debug break timer status
+        if isBreakTimerActive, let startTime = breakTimerStartTime {
+            let elapsed = Date().timeIntervalSince(startTime)
+            let remaining = max(0, 900 - elapsed) // Assuming 15min default
+            let minutesLeft = Int(remaining / 60)
+            let secondsLeft = Int(remaining.truncatingRemainder(dividingBy: 60))
+            print("☕ DEBUG: Break timer activo - Quedan \(minutesLeft):\(String(format: "%02d", secondsLeft))")
+        }
+        
+        // Debug deep focus timer status
+        if isDeepFocusEnabled, let startTime = deepFocusStartTime {
+            let elapsed = Date().timeIntervalSince(startTime)
+            let remaining = max(0, customFocusDuration - elapsed)
+            let minutesLeft = Int(remaining / 60)
+            let secondsLeft = Int(remaining.truncatingRemainder(dividingBy: 60))
+            print("🧘 DEBUG: Deep Focus activo - Quedan \(minutesLeft):\(String(format: "%02d", secondsLeft)) (\(Int(customFocusDuration/60))min total)")
+        }
     }
     
     private func updateCallStatus() {
@@ -846,6 +1261,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         if wasInCall != isInCall {
             print("🔄 FastSwitch: Estado de llamada cambió: \(wasInCall) → \(isInCall)")
+            
+            // Track call time
+            if isInCall {
+                // Starting a call
+                callStartTime = Date()
+            } else if let startTime = callStartTime {
+                // Ending a call
+                let callDuration = Date().timeIntervalSince(startTime)
+                currentDayCallTime += callDuration
+                callStartTime = nil
+                print("📞 FastSwitch: Llamada terminada - Duración: \(Int(callDuration / 60))m")
+            }
         }
     }
     
@@ -869,6 +1296,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             // Send notification when we reach or exceed the interval
             if sessionDuration >= interval {
                 print("🔔 FastSwitch: Enviando notificación #\(index + 1) - Intervalo: \(Int(interval))s (sesión: \(Int(sessionDuration))s)")
+                print("🔔 DEBUG: ✅ NOTIFICACIÓN ENVIADA! Intervalo alcanzado: \(Int(interval/60))min")
                 sendBreakNotification(sessionDuration: sessionDuration)
                 sentNotificationIntervals.insert(interval)
                 
@@ -880,6 +1308,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             } else if sessionDuration >= interval - checkInterval {
                 let timeLeft = Int(interval - sessionDuration)
                 print("⏰ FastSwitch: Próxima notificación en \(timeLeft)s (intervalo: \(Int(interval))s)")
+                print("⚠️ DEBUG: ⏰ PRÓXIMA NOTIFICACIÓN MUY CERCA! \(timeLeft)s restantes")
             }
         }
     }
@@ -911,23 +1340,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         content.interruptionLevel = .timeSensitive
         
         // Add action buttons that require user interaction
-        let dismissAction = UNNotificationAction(
-            identifier: "DISMISS_ACTION",
-            title: "✅ Got it!",
+        let startBreakAction = UNNotificationAction(
+            identifier: "START_BREAK_ACTION",
+            title: "☕ Start 15min Break",
             options: []
         )
         
         let snoozeAction = UNNotificationAction(
             identifier: "SNOOZE_ACTION", 
-            title: "⏰ Remind me in 5 min",
+            title: "⏰ Snooze 5min",
             options: []
+        )
+        
+        let keepWorkingAction = UNNotificationAction(
+            identifier: "KEEP_WORKING_ACTION",
+            title: "🏃 Keep Working",
+            options: []
+        )
+        
+        let showStatsAction = UNNotificationAction(
+            identifier: "SHOW_STATS_ACTION",
+            title: "📊 Show Stats",
+            options: [.foreground]
         )
         
         let category = UNNotificationCategory(
             identifier: "BREAK_REMINDER",
-            actions: [dismissAction, snoozeAction],
+            actions: [startBreakAction, keepWorkingAction, snoozeAction, showStatsAction],
             intentIdentifiers: [],
-            options: [.customDismissAction]
+            options: []
         )
         
         UNUserNotificationCenter.current().setNotificationCategories([category])
@@ -981,6 +1422,547 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [stickyBreakNotificationID])
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [stickyBreakNotificationID])
         print("🔕 FastSwitch: Sticky break notifications stopped")
+    }
+    
+    // MARK: - App Tracking
+    private func getCurrentFrontApp() -> String? {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
+        return frontApp.bundleIdentifier ?? frontApp.localizedName ?? "Unknown"
+    }
+    
+    private func trackAppUsage() {
+        let now = Date()
+        let timeElapsed = now.timeIntervalSince(lastAppCheckTime)
+        
+        // Only track if less than 10 seconds elapsed (avoid huge gaps from sleep/inactive periods)
+        if timeElapsed < 10, let currentApp = currentFrontApp {
+            appUsageToday[currentApp, default: 0] += timeElapsed
+        }
+        
+        // Update current front app
+        let newFrontApp = getCurrentFrontApp()
+        if newFrontApp != currentFrontApp {
+            print("📱 FastSwitch: App changed: \(currentFrontApp ?? "nil") → \(newFrontApp ?? "nil")")
+            currentFrontApp = newFrontApp
+        }
+        
+        lastAppCheckTime = now
+    }
+    
+    // MARK: - Break and Session Tracking
+    private func startBreak() {
+        guard !isCurrentlyOnBreak else { return }
+        
+        isCurrentlyOnBreak = true
+        breakStartTime = Date()
+        print("☕ FastSwitch: Iniciando descanso")
+        
+        // End current continuous session if there is one
+        if let sessionStart = currentContinuousSessionStart {
+            let duration = Date().timeIntervalSince(sessionStart)
+            continuousWorkSessions.append(SessionRecord(start: sessionStart, duration: duration))
+            
+            // Update longest session if needed
+            if duration > longestContinuousSession {
+                longestContinuousSession = duration
+            }
+            
+            let minutes = Int(duration / 60)
+            print("🏁 FastSwitch: Sesión continua terminada: \(minutes)m")
+            
+            currentContinuousSessionStart = nil
+        }
+    }
+    
+    private func endBreak() {
+        guard isCurrentlyOnBreak, let breakStart = breakStartTime else { return }
+        
+        let breakDuration = Date().timeIntervalSince(breakStart)
+        breaksTaken.append(SessionRecord(start: breakStart, duration: breakDuration))
+        totalBreakTime += breakDuration
+        
+        let minutes = Int(breakDuration / 60)
+        print("✅ FastSwitch: Descanso terminado: \(minutes)m")
+        
+        isCurrentlyOnBreak = false
+        breakStartTime = nil
+    }
+    
+    private func startContinuousSession() {
+        guard currentContinuousSessionStart == nil else { return }
+        
+        currentContinuousSessionStart = Date()
+        print("🚀 FastSwitch: Iniciando sesión continua")
+    }
+    
+    private func getCurrentContinuousSessionDuration() -> TimeInterval {
+        guard let sessionStart = currentContinuousSessionStart else { return 0 }
+        return Date().timeIntervalSince(sessionStart)
+    }
+    
+    // MARK: - Daily Dashboard
+    private func generateDashboard() -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        formatter.timeStyle = .none
+        
+        let today = formatter.string(from: Date())
+        var dashboard = "📊 Daily Usage Report - \(today)\n\n"
+        
+        // Total session time
+        let totalSession = getCurrentSessionDuration()
+        let sessionHours = Int(totalSession) / 3600
+        let sessionMinutes = Int(totalSession) % 3600 / 60
+        dashboard += "⏰ Total Work Session: \(sessionHours)h \(sessionMinutes)m\n\n"
+        
+        // App usage breakdown
+        if !appUsageToday.isEmpty {
+            dashboard += "📱 App Usage Breakdown:\n"
+            
+            // Calculate total usage time for percentage calculations
+            let totalAppTime = appUsageToday.values.reduce(0, +)
+            
+            // Sort apps by usage time
+            let sortedApps = appUsageToday.sorted { $0.value > $1.value }
+            
+            for (app, time) in sortedApps.prefix(10) { // Top 10 apps
+                let hours = Int(time) / 3600
+                let minutes = Int(time) % 3600 / 60
+                let appName = getAppDisplayName(from: app)
+                
+                // Calculate percentage
+                let percentage = totalAppTime > 0 ? (time / totalAppTime) * 100 : 0
+                let percentageStr = String(format: "%.1f%%", percentage)
+                
+                if hours > 0 {
+                    dashboard += "  • \(appName): \(hours)h \(minutes)m (\(percentageStr))\n"
+                } else if minutes > 0 {
+                    dashboard += "  • \(appName): \(minutes)m (\(percentageStr))\n"
+                } else {
+                    dashboard += "  • \(appName): <1m (\(percentageStr))\n"
+                }
+            }
+            
+            // Show total tracked time
+            let totalHours = Int(totalAppTime) / 3600
+            let totalMinutes = Int(totalAppTime) % 3600 / 60
+            if totalHours > 0 {
+                dashboard += "\n📊 Total App Time Tracked: \(totalHours)h \(totalMinutes)m\n"
+            } else {
+                dashboard += "\n📊 Total App Time Tracked: \(totalMinutes)m\n"
+            }
+        } else {
+            dashboard += "📱 No app usage data recorded today\n"
+        }
+        
+        // Deep Focus sessions
+        dashboard += "\n🧘 Deep Focus: "
+        if isDeepFocusEnabled {
+            if let startTime = deepFocusStartTime {
+                let focusTime = Date().timeIntervalSince(startTime)
+                let focusMinutes = Int(focusTime / 60)
+                dashboard += "Currently active (\(focusMinutes)m)"
+            } else {
+                dashboard += "Currently active"
+            }
+        } else {
+            dashboard += "Not active today"
+        }
+        
+        // Call time
+        dashboard += "\n📞 In Calls: "
+        if isInCall {
+            dashboard += "Currently in a call"
+        } else {
+            dashboard += "No active calls"
+        }
+        
+        // Break and continuous session analysis
+        dashboard += "\n\n💪 Work Pattern Analysis:"
+        
+        // Current status
+        if isCurrentlyOnBreak {
+            if let breakStart = breakStartTime {
+                let currentBreakTime = Date().timeIntervalSince(breakStart)
+                let breakMinutes = Int(currentBreakTime / 60)
+                dashboard += "\n☕ Currently on break (\(breakMinutes)m)"
+            } else {
+                dashboard += "\n☕ Currently on break"
+            }
+        } else if let sessionStart = currentContinuousSessionStart {
+            let currentSessionTime = Date().timeIntervalSince(sessionStart)
+            let sessionMinutes = Int(currentSessionTime / 60)
+            dashboard += "\n🏃 Current continuous session: \(sessionMinutes)m"
+        } else {
+            dashboard += "\n⏸️ Currently inactive"
+        }
+        
+        // Break statistics
+        let breakCount = breaksTaken.count
+        if breakCount > 0 {
+            let totalBreakHours = Int(totalBreakTime) / 3600
+            let totalBreakMinutes = Int(totalBreakTime) % 3600 / 60
+            let averageBreakTime = totalBreakTime / Double(breakCount)
+            let avgBreakMinutes = Int(averageBreakTime / 60)
+            
+            if totalBreakHours > 0 {
+                dashboard += "\n☕ Breaks taken: \(breakCount) (\(totalBreakHours)h \(totalBreakMinutes)m total, ~\(avgBreakMinutes)m avg)"
+            } else {
+                dashboard += "\n☕ Breaks taken: \(breakCount) (\(totalBreakMinutes)m total, ~\(avgBreakMinutes)m avg)"
+            }
+        } else {
+            dashboard += "\n☕ No breaks taken today"
+        }
+        
+        // Continuous session statistics
+        let sessionCount = continuousWorkSessions.count
+        if sessionCount > 0 {
+            let longestHours = Int(longestContinuousSession) / 3600
+            let longestMinutes = Int(longestContinuousSession) % 3600 / 60
+            
+            // Calculate average session length
+            let totalSessionTime = continuousWorkSessions.reduce(0) { $0 + $1.duration }
+            let averageSessionTime = totalSessionTime / Double(sessionCount)
+            let avgSessionMinutes = Int(averageSessionTime / 60)
+            
+            if longestHours > 0 {
+                dashboard += "\n🏃 Work sessions: \(sessionCount) (longest: \(longestHours)h \(longestMinutes)m, avg: \(avgSessionMinutes)m)"
+            } else {
+                dashboard += "\n🏃 Work sessions: \(sessionCount) (longest: \(longestMinutes)m, avg: \(avgSessionMinutes)m)"
+            }
+            
+            // Warning for long sessions without breaks
+            if longestContinuousSession > 3600 { // More than 1 hour
+                dashboard += "\n⚠️ Consider taking more frequent breaks for health!"
+            }
+        } else {
+            dashboard += "\n🏃 No completed work sessions today"
+        }
+        
+        // Include current session in longest calculation for warning
+        let currentSessionDuration = getCurrentContinuousSessionDuration()
+        if currentSessionDuration > 3600 {
+            let currentHours = Int(currentSessionDuration) / 3600
+            let currentMinutes = Int(currentSessionDuration) % 3600 / 60
+            dashboard += "\n⚠️ Current session is \(currentHours)h \(currentMinutes)m - time for a break!"
+        } else if currentSessionDuration > 2700 { // 45 minutes
+            let currentMinutes = Int(currentSessionDuration / 60)
+            dashboard += "\n💡 Current session: \(currentMinutes)m - consider a break soon"
+        }
+        
+        return dashboard
+    }
+    
+    // MARK: - Report Generation
+    private func generateWeeklyReport() -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        
+        let calendar = Calendar.current
+        let today = Date()
+        let weekAgo = calendar.date(byAdding: .day, value: -7, to: today)!
+        
+        var report = "📊 Weekly Usage Report\n"
+        report += "📅 \(formatter.string(from: weekAgo)) - \(formatter.string(from: today))\n\n"
+        
+        // Get data for the last 7 days
+        let weekData = getDataForDateRange(from: weekAgo, to: today)
+        
+        if weekData.isEmpty {
+            report += "📭 No data available for this week.\n"
+            return report
+        }
+        
+        // Calculate totals
+        let totalSessionTime = weekData.reduce(0) { $0 + $1.totalSessionTime }
+        let totalBreakTime = weekData.reduce(0) { $0 + $1.totalBreakTime }
+        let totalCallTime = weekData.reduce(0) { $0 + $1.callTime }
+        let totalDays = weekData.count
+        
+        // Session time summary
+        let hours = Int(totalSessionTime) / 3600
+        let minutes = Int(totalSessionTime) % 3600 / 60
+        report += "⏰ Total Work Time: \(hours)h \(minutes)m across \(totalDays) days\n"
+        
+        if totalDays > 0 {
+            let avgDaily = totalSessionTime / Double(totalDays)
+            let avgHours = Int(avgDaily) / 3600
+            let avgMinutes = Int(avgDaily) % 3600 / 60
+            report += "📈 Average Daily: \(avgHours)h \(avgMinutes)m\n"
+        }
+        
+        // Break analysis
+        let breakHours = Int(totalBreakTime) / 3600
+        let breakMinutes = Int(totalBreakTime) % 3600 / 60
+        report += "☕ Total Breaks: \(breakHours)h \(breakMinutes)m\n"
+        
+        // Call time
+        let callHours = Int(totalCallTime) / 3600
+        let callMinutesPart = Int(totalCallTime) % 3600 / 60
+        report += "📞 Call Time: \(callHours)h \(callMinutesPart)m\n"
+        
+        // Top apps aggregation
+        var aggregatedAppUsage: [String: TimeInterval] = [:]
+        for dayData in weekData {
+            for (app, time) in dayData.appUsage {
+                aggregatedAppUsage[app, default: 0] += time
+            }
+        }
+        
+        if !aggregatedAppUsage.isEmpty {
+            report += "\n📱 Top Apps This Week:\n"
+            let sortedApps = aggregatedAppUsage.sorted { $0.value > $1.value }
+            for (app, time) in sortedApps.prefix(5) {
+                let appHours = Int(time) / 3600
+                let appMinutes = Int(time) % 3600 / 60
+                let appName = getAppDisplayName(from: app)
+                
+                if appHours > 0 {
+                    report += "  • \(appName): \(appHours)h \(appMinutes)m\n"
+                } else {
+                    report += "  • \(appName): \(appMinutes)m\n"
+                }
+            }
+        }
+        
+        // Deep Focus analysis
+        let allDeepFocusSessions = weekData.flatMap { $0.deepFocusSessions }
+        if !allDeepFocusSessions.isEmpty {
+            let totalDeepFocusTime = allDeepFocusSessions.reduce(0) { $0 + $1.duration }
+            let focusHours = Int(totalDeepFocusTime) / 3600
+            let focusMinutes = Int(totalDeepFocusTime) % 3600 / 60
+            report += "\n🧘 Deep Focus: \(allDeepFocusSessions.count) sessions, \(focusHours)h \(focusMinutes)m total\n"
+        }
+        
+        return report
+    }
+    
+    private func generateYearlyReport() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy"
+        let currentYear = formatter.string(from: Date())
+        
+        var report = "📊 Yearly Usage Report - \(currentYear)\n\n"
+        
+        // Get data for the current year
+        let calendar = Calendar.current
+        let startOfYear = calendar.date(from: DateComponents(year: calendar.component(.year, from: Date())))!
+        let yearData = getDataForDateRange(from: startOfYear, to: Date())
+        
+        if yearData.isEmpty {
+            report += "📭 No data available for this year.\n"
+            return report
+        }
+        
+        // Calculate totals
+        let totalSessionTime = yearData.reduce(0) { $0 + $1.totalSessionTime }
+        let totalBreakTime = yearData.reduce(0) { $0 + $1.totalBreakTime }
+        let totalCallTime = yearData.reduce(0) { $0 + $1.callTime }
+        let totalDays = yearData.count
+        
+        // Session time summary
+        let hours = Int(totalSessionTime) / 3600
+        let minutes = Int(totalSessionTime) % 3600 / 60
+        report += "⏰ Total Work Time: \(hours)h \(minutes)m across \(totalDays) days\n"
+        
+        if totalDays > 0 {
+            let avgDaily = totalSessionTime / Double(totalDays)
+            let avgHours = Int(avgDaily) / 3600
+            let avgMinutes = Int(avgDaily) % 3600 / 60
+            report += "📈 Average Daily: \(avgHours)h \(avgMinutes)m\n"
+        }
+        
+        // Monthly breakdown
+        report += "\n📅 Monthly Breakdown:\n"
+        let monthlyData = groupDataByMonth(yearData)
+        let monthFormatter = DateFormatter()
+        monthFormatter.dateFormat = "MMMM"
+        
+        for (month, data) in monthlyData.sorted(by: { $0.key < $1.key }) {
+            let monthTime = data.reduce(0) { $0 + $1.totalSessionTime }
+            let monthHours = Int(monthTime) / 3600
+            let monthMinutes = Int(monthTime) % 3600 / 60
+            let monthName = monthFormatter.string(from: month)
+            report += "  • \(monthName): \(monthHours)h \(monthMinutes)m (\(data.count) days)\n"
+        }
+        
+        // Top apps for the year
+        var aggregatedAppUsage: [String: TimeInterval] = [:]
+        for dayData in yearData {
+            for (app, time) in dayData.appUsage {
+                aggregatedAppUsage[app, default: 0] += time
+            }
+        }
+        
+        if !aggregatedAppUsage.isEmpty {
+            report += "\n📱 Top Apps This Year:\n"
+            let sortedApps = aggregatedAppUsage.sorted { $0.value > $1.value }
+            for (app, time) in sortedApps.prefix(10) {
+                let appHours = Int(time) / 3600
+                let appMinutes = Int(time) % 3600 / 60
+                let appName = getAppDisplayName(from: app)
+                
+                if appHours > 0 {
+                    report += "  • \(appName): \(appHours)h \(appMinutes)m\n"
+                } else {
+                    report += "  • \(appName): \(appMinutes)m\n"
+                }
+            }
+        }
+        
+        // Deep Focus yearly stats
+        let allDeepFocusSessions = yearData.flatMap { $0.deepFocusSessions }
+        if !allDeepFocusSessions.isEmpty {
+            let totalDeepFocusTime = allDeepFocusSessions.reduce(0) { $0 + $1.duration }
+            let focusHours = Int(totalDeepFocusTime) / 3600
+            let focusMinutes = Int(totalDeepFocusTime) % 3600 / 60
+            report += "\n🧘 Deep Focus This Year: \(allDeepFocusSessions.count) sessions, \(focusHours)h \(focusMinutes)m total\n"
+        }
+        
+        return report
+    }
+    
+    private func getDataForDateRange(from startDate: Date, to endDate: Date) -> [DailyUsageData] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        var result: [DailyUsageData] = []
+        let calendar = Calendar.current
+        var currentDate = startDate
+        
+        while currentDate <= endDate {
+            let dateKey = formatter.string(from: currentDate)
+            if let dayData = usageHistory.dailyData[dateKey] {
+                result.append(dayData)
+            }
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate)!
+        }
+        
+        return result
+    }
+    
+    private func groupDataByMonth(_ data: [DailyUsageData]) -> [Date: [DailyUsageData]] {
+        let calendar = Calendar.current
+        var monthlyData: [Date: [DailyUsageData]] = [:]
+        
+        for dayData in data {
+            let month = calendar.dateInterval(of: .month, for: dayData.date)!.start
+            monthlyData[month, default: []].append(dayData)
+        }
+        
+        return monthlyData
+    }
+    
+    private func getAppDisplayName(from identifier: String) -> String {
+        // Try to get user-friendly app name
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier),
+           let bundle = Bundle(url: url),
+           let displayName = bundle.localizedInfoDictionary?["CFBundleDisplayName"] as? String ??
+                             bundle.infoDictionary?["CFBundleDisplayName"] as? String ??
+                             bundle.localizedInfoDictionary?["CFBundleName"] as? String ??
+                             bundle.infoDictionary?["CFBundleName"] as? String {
+            return displayName
+        }
+        
+        // Fallback to bundle identifier with some cleanup
+        return identifier.replacingOccurrences(of: "com.", with: "")
+                        .replacingOccurrences(of: "app.", with: "")
+                        .components(separatedBy: ".").last ?? identifier
+    }
+    
+    private func showDailyDashboard() {
+        print("📊 FastSwitch: Mostrando dashboard diario")
+        
+        let content = UNMutableNotificationContent()
+        content.title = "📊 Daily Work Summary"
+        content.body = generateDashboard()
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("Submarine.aiff"))
+        content.badge = 1
+        content.interruptionLevel = .active
+        content.categoryIdentifier = "DAILY_DASHBOARD"
+        
+        // Add action buttons
+        let weeklyReportAction = UNNotificationAction(
+            identifier: "WEEKLY_REPORT_ACTION",
+            title: "📈 Weekly Report",
+            options: [.foreground]
+        )
+        
+        let exportDataAction = UNNotificationAction(
+            identifier: "EXPORT_DATA_ACTION",
+            title: "💾 Export Data",
+            options: [.foreground]
+        )
+        
+        let resetSessionAction = UNNotificationAction(
+            identifier: "DASHBOARD_RESET_ACTION",
+            title: "🔄 Reset Session",
+            options: []
+        )
+        
+        let setGoalAction = UNNotificationAction(
+            identifier: "SET_GOAL_ACTION",
+            title: "🎯 Set Tomorrow's Goal",
+            options: []
+        )
+        
+        let category = UNNotificationCategory(
+            identifier: "DAILY_DASHBOARD",
+            actions: [weeklyReportAction, exportDataAction, resetSessionAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+        
+        let request = UNNotificationRequest(
+            identifier: "daily-dashboard-\(Int(Date().timeIntervalSince1970))",
+            content: content,
+            trigger: nil
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error enviando dashboard: \(error)")
+            } else {
+                print("✅ FastSwitch: Dashboard diario enviado")
+            }
+        }
+    }
+    
+    private func scheduleDailyDashboard() {
+        // Cancel existing timer
+        dashboardTimer?.invalidate()
+        
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // Create target time: today at 18:30
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.hour = 18
+        components.minute = 30
+        components.second = 0
+        
+        guard let targetTime = calendar.date(from: components) else { return }
+        
+        // If it's already past 18:30 today, schedule for tomorrow
+        let finalTargetTime = targetTime < now ? 
+            calendar.date(byAdding: .day, value: 1, to: targetTime)! : targetTime
+        
+        let timeInterval = finalTargetTime.timeIntervalSince(now)
+        
+        print("📊 FastSwitch: Dashboard programado para \(finalTargetTime)")
+        
+        dashboardTimer = Timer.scheduledTimer(withTimeInterval: timeInterval, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            if !self.hasShownDashboardToday {
+                self.showDailyDashboard()
+                self.hasShownDashboardToday = true
+            }
+            // Reset for next day and schedule
+            self.hasShownDashboardToday = false
+            self.scheduleDailyDashboard()
+        }
     }
     
     private func updateStatusBarTitle(sessionDuration: TimeInterval) {
@@ -1058,7 +2040,127 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sessionStartTime = Date()
         totalActiveTime = 0
         sentNotificationIntervals.removeAll()
-        print("🔄 FastSwitch: Sesión reiniciada")
+        
+        // Reset break and session tracking
+        breaksTaken.removeAll()
+        continuousWorkSessions.removeAll()
+        currentContinuousSessionStart = Date()
+        isCurrentlyOnBreak = false
+        breakStartTime = nil
+        longestContinuousSession = 0
+        totalBreakTime = 0
+        
+        print("🔄 FastSwitch: Sesión y tracking de descansos reiniciados")
+    }
+    
+    @objc private func showDashboardManually() {
+        print("📊 FastSwitch: Dashboard solicitado manualmente")
+        showDailyDashboard()
+    }
+    
+    @objc private func showWeeklyReport() {
+        print("📈 FastSwitch: Reporte semanal solicitado")
+        saveTodayData() // Ensure current data is saved
+        showReport(title: "📈 Weekly Report", content: generateWeeklyReport(), identifier: "weekly-report")
+    }
+    
+    @objc private func showYearlyReport() {
+        print("📅 FastSwitch: Reporte anual solicitado")
+        saveTodayData() // Ensure current data is saved
+        showReport(title: "📅 Yearly Report", content: generateYearlyReport(), identifier: "yearly-report")
+    }
+    
+    private func showReport(title: String, content: String, identifier: String) {
+        let notificationContent = UNMutableNotificationContent()
+        notificationContent.title = title
+        notificationContent.body = content
+        notificationContent.sound = UNNotificationSound(named: UNNotificationSoundName("Submarine.aiff"))
+        notificationContent.badge = 1
+        notificationContent.interruptionLevel = .active
+        notificationContent.categoryIdentifier = "USAGE_REPORT"
+        
+        // Add action button
+        let okAction = UNNotificationAction(
+            identifier: "REPORT_OK_ACTION",
+            title: "✅ Got it!",
+            options: []
+        )
+        
+        let category = UNNotificationCategory(
+            identifier: "USAGE_REPORT",
+            actions: [okAction],
+            intentIdentifiers: [],
+            options: [.customDismissAction]
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+        
+        let request = UNNotificationRequest(
+            identifier: "\(identifier)-\(Int(Date().timeIntervalSince1970))",
+            content: notificationContent,
+            trigger: nil
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error enviando reporte: \(error)")
+            } else {
+                print("✅ FastSwitch: Reporte \(identifier) enviado")
+            }
+        }
+    }
+    
+    @objc private func exportUsageData() {
+        print("💾 FastSwitch: Exportando datos de uso")
+        saveTodayData() // Ensure current data is saved
+        
+        let savePanel = NSSavePanel()
+        savePanel.title = "Export Usage Data"
+        savePanel.nameFieldStringValue = "FastSwitch-Usage-Data-\(getTodayKey()).json"
+        savePanel.allowedContentTypes = [.json]
+        savePanel.canCreateDirectories = true
+        
+        savePanel.begin { response in
+            if response == .OK, let url = savePanel.url {
+                do {
+                    let data = try JSONEncoder().encode(self.usageHistory)
+                    try data.write(to: url)
+                    
+                    // Show success notification
+                    let content = UNMutableNotificationContent()
+                    content.title = "💾 Export Complete"
+                    content.body = "Usage data exported successfully to:\n\(url.path)\n\n📊 \(self.usageHistory.dailyData.count) days of data exported."
+                    content.sound = UNNotificationSound(named: UNNotificationSoundName("Glass.aiff"))
+                    content.interruptionLevel = .active
+                    
+                    let request = UNNotificationRequest(
+                        identifier: "export-success-\(Int(Date().timeIntervalSince1970))",
+                        content: content,
+                        trigger: nil
+                    )
+                    
+                    UNUserNotificationCenter.current().add(request)
+                    print("✅ FastSwitch: Datos exportados a: \(url.path)")
+                } catch {
+                    print("❌ FastSwitch: Error exportando datos: \(error)")
+                    
+                    // Show error notification
+                    let content = UNMutableNotificationContent()
+                    content.title = "❌ Export Failed"
+                    content.body = "Failed to export usage data:\n\(error.localizedDescription)"
+                    content.sound = UNNotificationSound(named: UNNotificationSoundName("Basso.aiff"))
+                    content.interruptionLevel = .active
+                    
+                    let request = UNNotificationRequest(
+                        identifier: "export-error-\(Int(Date().timeIntervalSince1970))",
+                        content: content,
+                        trigger: nil
+                    )
+                    
+                    UNUserNotificationCenter.current().add(request)
+                }
+            }
+        }
     }
     
     private func updateConfigurationMenuState() {
@@ -1110,6 +2212,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sentNotificationIntervals.removeAll() // Reset sent notifications when changing intervals
         updateConfigurationMenuState()
         print("🧪 FastSwitch: Configurado en modo testing - Intervalos: 1min, 5min, 10min")
+        print("🧪 DEBUG: MODO TESTING ACTIVADO - Próximas notificaciones en: 1min, 5min, 10min")
     }
     
     @objc private func setNotificationInterval45() {
@@ -1119,6 +2222,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sentNotificationIntervals.removeAll()
         updateConfigurationMenuState()
         print("⏰ FastSwitch: Configurado intervalos 45min")
+        print("⏰ DEBUG: INTERVALOS 45MIN - Próximas notificaciones en: 45min, 90min, 135min")
     }
     
     @objc private func setNotificationInterval60() {
@@ -1128,6 +2232,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sentNotificationIntervals.removeAll()
         updateConfigurationMenuState()
         print("⏰ FastSwitch: Configurado intervalos 60min")
+        print("⏰ DEBUG: INTERVALOS 60MIN - Próximas notificaciones en: 60min, 120min, 180min")
     }
     
     @objc private func setNotificationInterval90() {
@@ -1137,6 +2242,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sentNotificationIntervals.removeAll()
         updateConfigurationMenuState()
         print("⏰ FastSwitch: Configurado intervalos 90min")
+        print("⏰ DEBUG: INTERVALOS 90MIN - Próximas notificaciones en: 90min, 180min, 270min")
     }
     
     @objc private func disableNotifications() {
@@ -1144,6 +2250,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         currentNotificationMode = .disabled
         updateConfigurationMenuState()
         print("🔕 FastSwitch: Notificaciones deshabilitadas")
+        print("🔕 DEBUG: NOTIFICACIONES DESHABILITADAS - No habrá recordatorios")
     }
     
     // MARK: - UNUserNotificationCenterDelegate
@@ -1192,6 +2299,105 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             print("✅ FastSwitch: Usuario confirmó notificación Deep Focus")
             // Stop sticky notifications since user clicked
             stopStickyDeepFocusNotification()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "DASHBOARD_OK_ACTION":
+            print("📊 FastSwitch: Usuario confirmó dashboard diario")
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "DASHBOARD_RESET_ACTION":
+            print("🔄 FastSwitch: Usuario solicitó reset desde dashboard")
+            resetSession()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "REPORT_OK_ACTION":
+            print("📊 FastSwitch: Usuario confirmó reporte")
+            NSApp.dockTile.badgeLabel = nil
+            
+        // New Break Reminder Actions
+        case "START_BREAK_ACTION":
+            print("☕ FastSwitch: Usuario inició descanso desde notificación")
+            startBreakTimer(duration: 900) // 15 minutes
+            stopStickyBreakNotifications()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "KEEP_WORKING_ACTION":
+            print("🏃 FastSwitch: Usuario eligió continuar trabajando")
+            // Reset session start time to extend current session
+            sessionStartTime = Date()
+            sentNotificationIntervals.removeAll()
+            stopStickyBreakNotifications()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "SHOW_STATS_ACTION":
+            print("📊 FastSwitch: Usuario solicitó estadísticas desde notificación")
+            showDailyDashboard()
+            stopStickyBreakNotifications()
+            NSApp.dockTile.badgeLabel = nil
+            
+        // New Deep Focus Actions
+        case "FOCUS_ANOTHER_HOUR_ACTION":
+            print("🧘 FastSwitch: Usuario eligió continuar focus otra hora")
+            stopStickyDeepFocusNotification()
+            // Restart with 60 minutes
+            setCustomFocusDuration(3600)
+            deepFocusTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
+                self?.showDeepFocusCompletionNotification()
+            }
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "TAKE_15MIN_BREAK_ACTION":
+            print("☕ FastSwitch: Usuario eligió tomar descanso de 15min")
+            stopStickyDeepFocusNotification()
+            if isDeepFocusEnabled {
+                toggleDeepFocus() // Disable deep focus
+            }
+            startBreakTimer(duration: 900) // 15 minutes
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "SHOW_SESSION_STATS_ACTION":
+            print("📊 FastSwitch: Usuario solicitó estadísticas de sesión")
+            stopStickyDeepFocusNotification()
+            showDailyDashboard()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "SET_CUSTOM_FOCUS_ACTION":
+            print("🎯 FastSwitch: Usuario eligió duración personalizada")
+            stopStickyDeepFocusNotification()
+            showCustomFocusDurationOptions()
+            NSApp.dockTile.badgeLabel = nil
+            
+        // Break Timer Complete Actions
+        case "BACK_TO_WORK_ACTION":
+            print("🏃 FastSwitch: Usuario volvió al trabajo")
+            stopBreakTimer()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "EXTEND_BREAK_ACTION":
+            print("☕ FastSwitch: Usuario extendió descanso 5min")
+            startBreakTimer(duration: 300) // 5 more minutes
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "SHOW_DASHBOARD_ACTION":
+            print("📊 FastSwitch: Usuario solicitó dashboard desde break timer")
+            showDailyDashboard()
+            NSApp.dockTile.badgeLabel = nil
+            
+        // New Dashboard Actions
+        case "WEEKLY_REPORT_ACTION":
+            print("📈 FastSwitch: Usuario solicitó reporte semanal desde dashboard")
+            showWeeklyReport()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "EXPORT_DATA_ACTION":
+            print("💾 FastSwitch: Usuario solicitó exportar datos desde dashboard")
+            exportUsageData()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "SET_GOAL_ACTION":
+            print("🎯 FastSwitch: Usuario quiere configurar objetivo")
+            // For now, just show a confirmation
+            // In a full implementation, this could show a goal-setting interface
             NSApp.dockTile.badgeLabel = nil
             
         case UNNotificationDefaultActionIdentifier:

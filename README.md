@@ -67,6 +67,28 @@ FastSwitch is a lightweight macOS menu-bar app that lets you switch to your favo
   ```
 * Rebuild after making changes.
 
+## Usage Analytics & Reports
+
+FastSwitch includes comprehensive usage tracking and reporting features:
+
+### 📊 Built-in Reports
+- **Daily Dashboard**: Automatic daily summary with app usage breakdown
+- **Weekly Reports**: 7-day productivity analysis
+- **Yearly Reports**: Annual trends and statistics
+- **Real-time Tracking**: Session time, breaks, Deep Focus sessions
+
+### 💾 Data Export & Analysis
+For advanced analysis, you can export your usage data:
+
+1. **Export Data**: Menu → `📊 Reportes` → `💾 Exportar Datos`
+2. **External Analysis**: Use the included Python analyzer for detailed insights
+
+```bash
+python3 usage_analyzer.py FastSwitch-Usage-Data-2024-08-14.json
+```
+
+**📋 Full documentation**: See [USAGE_ANALYZER.md](USAGE_ANALYZER.md) for complete setup and usage instructions.
+
 ## Reset permissions
 
 tccutil reset Accessibility Bandonea.FastSwitch
