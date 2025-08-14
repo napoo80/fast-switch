@@ -23,7 +23,7 @@ private func hotKeyHandler(_ nextHandler: EventHandlerCallRef?,
     return noErr
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
     private var eventHandlerRef: EventHandlerRef?
     private var hotKeys: [EventHotKeyRef?] = []
@@ -41,6 +41,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastActivityTime: Date = Date()
     private var isInCall: Bool = false
     private var manualCallToggle: Bool = false
+    private var isDeepFocusEnabled: Bool = false
+    private var deepFocusStartTime: Date?
+    private var deepFocusTimer: Timer?
+    private var deepFocusNotificationTimer: Timer?
+    private var deepFocusNotificationStartTime: Date?
+    private var sentNotificationIntervals: Set<TimeInterval> = []
+    
+    // Break sticky notifications
+    private var stickyBreakStartTime: Date?
+    private var stickyBreakTimer: Timer?
+    private let stickyRepeatInterval: TimeInterval = 15      // reintentar cada 15s
+    private let stickyMaxDuration: TimeInterval = 60 * 60    // tope 60 min
+    private let stickyBreakNotificationID = "break-sticky"   // ID fijo para poder reemplazar/limpiar
+    private var stickyRemindersEnabled: Bool = false  // Disabled since native Alerts work better
+    
+    // Deep Focus: guardá el último ID para poder limpiarlo (bugfix)
+    private var lastDeepFocusNotificationID: String?
     
     // Configuration
     private let idleThreshold: TimeInterval = 300 // 5 minutes
@@ -48,6 +65,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let checkInterval: TimeInterval = 5 // 5 seconds para testing
     private var notificationIntervals: [TimeInterval] = [60, 300, 600] // 1min, 5min, 10min para testing
     private var notificationsEnabled: Bool = true
+    
+    // Track current notification mode
+    private enum NotificationMode {
+        case testing, interval45, interval60, interval90, disabled
+    }
+    private var currentNotificationMode: NotificationMode = .testing
 
     // F-keys → apps/acciones
     private let mapping: [UInt32: String] = [
@@ -58,7 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         UInt32(kVK_F5):  "action:meet-mic",                 // ⌘D (Meet)
         UInt32(kVK_F6):  "action:meet-cam",                 // ⌘E (Meet)
-        //UInt32(kVK_F7):  "action:insta360-track",           // ⌥T (AI tracking)
+        UInt32(kVK_F7):  "action:deep-focus",               // enables/disables focus
         UInt32(kVK_F8):  "com.spotify.client",
         UInt32(kVK_F9):  "com.tinyspeck.slackmacgap",
         UInt32(kVK_F10): "notion.id",
@@ -75,8 +98,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
         
-        // Request notification permissions
+        // Request notification permissions and set delegate
         requestNotificationPermissions()
+        UNUserNotificationCenter.current().delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -94,6 +118,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         callToggleItem.tag = 101
         menu.addItem(callToggleItem)
         
+        let deepFocusItem = NSMenuItem(title: "🧘 Deep Focus: OFF", action: #selector(toggleDeepFocusFromMenu), keyEquivalent: "")
+        deepFocusItem.tag = 102
+        menu.addItem(deepFocusItem)
+        
         menu.addItem(NSMenuItem(title: "🔄 Reiniciar sesión", action: #selector(resetSession), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         
@@ -102,12 +130,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let configItem = NSMenuItem(title: "⚙️ Configuración", action: nil, keyEquivalent: "")
         configItem.submenu = configMenu
         
-        configMenu.addItem(NSMenuItem(title: "🔔 Testing: 1-5-10min", action: #selector(setNotificationIntervalTest), keyEquivalent: ""))
-        configMenu.addItem(NSMenuItem(title: "🔔 Recordatorios cada 45m", action: #selector(setNotificationInterval45), keyEquivalent: ""))
-        configMenu.addItem(NSMenuItem(title: "🔔 Recordatorios cada 60m", action: #selector(setNotificationInterval60), keyEquivalent: ""))
-        configMenu.addItem(NSMenuItem(title: "🔔 Recordatorios cada 90m", action: #selector(setNotificationInterval90), keyEquivalent: ""))
+        let testingItem = NSMenuItem(title: "🔔 Testing: 1-5-10min", action: #selector(setNotificationIntervalTest), keyEquivalent: "")
+        testingItem.tag = 200
+        configMenu.addItem(testingItem)
+        
+        let interval45Item = NSMenuItem(title: "🔔 Recordatorios cada 45m", action: #selector(setNotificationInterval45), keyEquivalent: "")
+        interval45Item.tag = 201
+        configMenu.addItem(interval45Item)
+        
+        let interval60Item = NSMenuItem(title: "🔔 Recordatorios cada 60m", action: #selector(setNotificationInterval60), keyEquivalent: "")
+        interval60Item.tag = 202
+        configMenu.addItem(interval60Item)
+        
+        let interval90Item = NSMenuItem(title: "🔔 Recordatorios cada 90m", action: #selector(setNotificationInterval90), keyEquivalent: "")
+        interval90Item.tag = 203
+        configMenu.addItem(interval90Item)
+        
         configMenu.addItem(NSMenuItem.separator())
-        configMenu.addItem(NSMenuItem(title: "🔕 Desactivar recordatorios", action: #selector(disableNotifications), keyEquivalent: ""))
+        
+        let disableItem = NSMenuItem(title: "🔕 Desactivar recordatorios", action: #selector(disableNotifications), keyEquivalent: "")
+        disableItem.tag = 204
+        configMenu.addItem(disableItem)
+        
+        configMenu.addItem(NSMenuItem.separator())
+        configMenu.addItem(NSMenuItem(title: "⚙️ Ajustes de Notificaciones…", action: #selector(openNotificationsPrefs), keyEquivalent: ""))
+        
+        // Optional: uncomment to enable software sticky mode as fallback
+        // let stickyToggleItem = NSMenuItem(title: "🔄 Modo Sticky Software", action: #selector(toggleStickyMode), keyEquivalent: "")
+        // configMenu.addItem(stickyToggleItem)
         
         menu.addItem(configItem)
         menu.addItem(NSMenuItem.separator())
@@ -123,6 +173,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.setNotificationIntervalTest()
         }
+        
+        // Update initial menu state
+        updateConfigurationMenuState()
 
         // Hotkeys
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
@@ -139,6 +192,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) { 
         unregisterHotkeys()
         stopUsageTracking()
+        deepFocusTimer?.invalidate()
+        deepFocusNotificationTimer?.invalidate()
+        stickyBreakTimer?.invalidate()
     }
 
     private func registerHotkeys() {
@@ -168,6 +224,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             switch target {
             case "action:meet-mic": toggleMeetMic()
             case "action:meet-cam": toggleMeetCam()
+            case "action:deep-focus": toggleDeepFocus()
             case "action:insta360-track": toggleInsta360Tracking()
             default: break
             }
@@ -296,6 +353,251 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let result = NSAppleScript(source: script)?.executeAndReturnError(&error)
         if let error { print("AppleScript Chrome URL error:", error) }
         return (result?.booleanValue) ?? false
+    }
+
+    // MARK: - Deep Focus (F7)
+    private func toggleDeepFocus() {
+        isDeepFocusEnabled.toggle()
+        print("🧘 FastSwitch: F7 presionado - Toggle Deep Focus: \(isDeepFocusEnabled ? "ON" : "OFF")")
+        
+        if isDeepFocusEnabled {
+            enableDeepFocus()
+        } else {
+            disableDeepFocus()
+        }
+        
+        // Update menu bar and menu items to show focus status
+        updateStatusBarForFocus()
+        updateMenuItems(sessionDuration: getCurrentSessionDuration())
+    }
+    
+    private func enableDeepFocus() {
+        print("🧘 FastSwitch: Activando Deep Focus...")
+        
+        // Enable Do Not Disturb on macOS
+        let enableDNDScript = #"""
+        tell application "System Events"
+            tell process "Control Center"
+                try
+                    click menu bar item "Control Center" of menu bar 1
+                    delay 0.5
+                    click button "Do Not Disturb" of group 1 of window "Control Center"
+                end try
+            end tell
+        end tell
+        """#
+        
+        runAppleScript(enableDNDScript)
+        
+        // Enable Do Not Disturb in Slack
+        enableSlackDND()
+        
+        // Start 60-minute timer
+        deepFocusStartTime = Date()
+        deepFocusTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
+            self?.showDeepFocusCompletionNotification()
+        }
+        
+        print("✅ FastSwitch: Deep Focus activado - DND macOS + Slack, timer 60min iniciado")
+    }
+    
+    private func disableDeepFocus() {
+        print("🧘 FastSwitch: Desactivando Deep Focus...")
+        
+        // Cancel timer if running
+        deepFocusTimer?.invalidate()
+        deepFocusTimer = nil
+        
+        // Disable Do Not Disturb on macOS
+        let disableDNDScript = #"""
+        tell application "System Events"
+            tell process "Control Center"
+                try
+                    click menu bar item "Control Center" of menu bar 1
+                    delay 0.5
+                    click button "Do Not Disturb" of group 1 of window "Control Center"
+                end try
+            end tell
+        end tell
+        """#
+        
+        runAppleScript(disableDNDScript)
+        
+        // Disable Do Not Disturb in Slack
+        disableSlackDND()
+        
+        // Calculate session duration
+        let sessionDuration = deepFocusStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        let minutes = Int(sessionDuration / 60)
+        
+        print("✅ FastSwitch: Deep Focus desactivado - DND off macOS + Slack (duración: \(minutes)min)")
+        deepFocusStartTime = nil
+    }
+    
+    private func updateStatusBarForFocus() {
+        DispatchQueue.main.async {
+            let focusIndicator = self.isDeepFocusEnabled ? "🧘" : ""
+            let currentTitle = self.statusItem.button?.title ?? "F→"
+            
+            // Remove existing focus indicator if present
+            let cleanTitle = currentTitle.replacingOccurrences(of: "🧘", with: "").trimmingCharacters(in: .whitespaces)
+            
+            // Add focus indicator if enabled
+            self.statusItem.button?.title = self.isDeepFocusEnabled ? "\(focusIndicator) \(cleanTitle)" : cleanTitle
+        }
+    }
+    
+    private func enableSlackDND() {
+        print("🧘 FastSwitch: Activando DND en Slack...")
+        
+        // Set Slack status to DND for 60 minutes
+        let slackDNDScript = #"""
+        tell application "Slack"
+            try
+                activate
+                delay 0.5
+                -- Try to use keyboard shortcut for DND (Cmd+Shift+D)
+                tell application "System Events"
+                    keystroke "d" using {command down, shift down}
+                end tell
+            on error
+                -- Fallback: could implement manual UI interaction if needed
+                log "Could not set Slack DND via shortcut"
+            end try
+        end tell
+        """#
+        
+        runAppleScript(slackDNDScript)
+        print("✅ FastSwitch: Comando DND enviado a Slack")
+    }
+    
+    private func disableSlackDND() {
+        print("🧘 FastSwitch: Desactivando DND en Slack...")
+        
+        // Clear Slack DND
+        let slackClearDNDScript = #"""
+        tell application "Slack"
+            try
+                activate
+                delay 0.5
+                -- Try to use keyboard shortcut to clear DND (Cmd+Shift+D again)
+                tell application "System Events"
+                    keystroke "d" using {command down, shift down}
+                end tell
+            on error
+                log "Could not clear Slack DND via shortcut"
+            end try
+        end tell
+        """#
+        
+        runAppleScript(slackClearDNDScript)
+        print("✅ FastSwitch: DND de Slack desactivado")
+    }
+    
+    private func showDeepFocusCompletionNotification() {
+        print("🧘 FastSwitch: Sesión Deep Focus de 60min completada")
+        
+        // Start sticky notification tracking
+        deepFocusNotificationStartTime = Date()
+        startStickyDeepFocusNotification()
+    }
+    
+    private func startStickyDeepFocusNotification() {
+        // Cancel any existing notification timer
+        deepFocusNotificationTimer?.invalidate()
+        
+        // Send the notification
+        sendDeepFocusNotification()
+        
+        // Set up timer to re-send notification every 15 seconds for 1 minute if not dismissed
+        deepFocusNotificationTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] timer in
+            guard let self = self,
+                  let startTime = self.deepFocusNotificationStartTime else {
+                timer.invalidate()
+                return
+            }
+            
+            let elapsed = Date().timeIntervalSince(startTime)
+            if elapsed >= 60 { // 1 minute has passed
+                print("🧘 FastSwitch: Sticky notification timer expired after 1 minute")
+                timer.invalidate()
+                self.deepFocusNotificationTimer = nil
+                self.deepFocusNotificationStartTime = nil
+            } else {
+                // Re-send notification to keep it visible
+                print("🧘 FastSwitch: Re-enviando notificación sticky (\(Int(elapsed))s elapsed)")
+                self.sendDeepFocusNotification()
+            }
+        }
+    }
+    
+    private func sendDeepFocusNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "🧘 Deep Focus Session Complete"
+        content.body = "⏰ You've completed 60 minutes of focused work!\n\n🎉 Great job staying focused!\n\n💡 Consider taking a break or continuing your session.\n\n👆 MUST CLICK to dismiss this sticky notification."
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("Crystal.aiff"))
+        content.badge = 1
+        content.interruptionLevel = .critical  // Use critical for maximum persistence
+        content.categoryIdentifier = "DEEP_FOCUS_COMPLETE"
+        
+        // Add action buttons
+        let continueAction = UNNotificationAction(
+            identifier: "CONTINUE_FOCUS_ACTION",
+            title: "🧘 Continue Focusing",
+            options: []
+        )
+        
+        let takeBreakAction = UNNotificationAction(
+            identifier: "TAKE_BREAK_ACTION",
+            title: "☕ Take a Break",
+            options: []
+        )
+        
+        let dismissAction = UNNotificationAction(
+            identifier: "DISMISS_FOCUS_ACTION",
+            title: "✅ Got it!",
+            options: []
+        )
+        
+        let category = UNNotificationCategory(
+            identifier: "DEEP_FOCUS_COMPLETE",
+            actions: [continueAction, takeBreakAction, dismissAction],
+            intentIdentifiers: [],
+            options: [.customDismissAction]
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+        
+        // Use timestamp to make each notification unique
+        let id = "deep-focus-complete-\(Int(Date().timeIntervalSince1970))"
+        lastDeepFocusNotificationID = id
+        let request = UNNotificationRequest(
+            identifier: id,
+            content: content,
+            trigger: nil
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error enviando notificación Deep Focus: \(error)")
+            } else {
+                print("✅ FastSwitch: Notificación Deep Focus sticky enviada")
+            }
+        }
+    }
+    
+    private func stopStickyDeepFocusNotification() {
+        print("🧘 FastSwitch: Deteniendo notificaciones sticky Deep Focus")
+        deepFocusNotificationTimer?.invalidate()
+        deepFocusNotificationTimer = nil
+        deepFocusNotificationStartTime = nil
+        
+        // Clear any pending notifications using the saved ID
+        if let id = lastDeepFocusNotificationID {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
+            lastDeepFocusNotificationID = nil
+        }
     }
 
     // MARK: - Insta360 Link Controller (F7 → ⌥T)
@@ -448,6 +750,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func startUsageTracking() {
         sessionStartTime = Date()
         lastActivityTime = Date()
+        sentNotificationIntervals.removeAll()
         
         print("🚀 FastSwitch: Iniciando seguimiento de uso")
         print("⏰ FastSwitch: Intervalo de verificación: \(checkInterval)s")
@@ -558,17 +861,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         for (index, interval) in notificationIntervals.enumerated() {
-            if sessionDuration >= interval && sessionDuration < interval + checkInterval {
-                print("🔔 FastSwitch: Enviando notificación #\(index + 1) - Intervalo: \(Int(interval))s")
+            // Check if we've already sent a notification for this interval
+            if sentNotificationIntervals.contains(interval) {
+                continue
+            }
+            
+            // Send notification when we reach or exceed the interval
+            if sessionDuration >= interval {
+                print("🔔 FastSwitch: Enviando notificación #\(index + 1) - Intervalo: \(Int(interval))s (sesión: \(Int(sessionDuration))s)")
                 sendBreakNotification(sessionDuration: sessionDuration)
+                sentNotificationIntervals.insert(interval)
+                
+                // Start sticky notifications if enabled
+                if stickyRemindersEnabled {
+                    startStickyBreakNotifications()
+                }
                 break
-            } else if sessionDuration >= interval - checkInterval && sessionDuration < interval {
-                print("⏰ FastSwitch: Próxima notificación en \(Int(interval - sessionDuration))s")
+            } else if sessionDuration >= interval - checkInterval {
+                let timeLeft = Int(interval - sessionDuration)
+                print("⏰ FastSwitch: Próxima notificación en \(timeLeft)s (intervalo: \(Int(interval))s)")
             }
         }
     }
     
-    private func sendBreakNotification(sessionDuration: TimeInterval) {
+    private func sendBreakNotification(sessionDuration: TimeInterval, overrideIdentifier: String? = nil) {
         let content = UNMutableNotificationContent()
         
         let hours = Int(sessionDuration) / 3600
@@ -578,33 +894,93 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("📬 FastSwitch: Preparando notificación - Tiempo: \(hours)h \(minutes)m \(seconds)s")
         
         if isInCall {
-            content.title = "Break Reminder"
-            content.body = "You've been in meetings for \(hours)h \(minutes)m. Consider a short break when possible."
-            content.sound = .none // Quieter for calls
-            print("🔇 FastSwitch: Notificación de llamada (silenciosa)")
+            content.title = "🔔 Break Reminder - Meeting Break"
+            content.body = "You've been in meetings for \(hours)h \(minutes)m.\n\n💡 Consider a short break when possible.\n\n👆 Click to dismiss this reminder."
+            content.sound = UNNotificationSound(named: UNNotificationSoundName("Glass.aiff"))
+            print("🔇 FastSwitch: Notificación de llamada")
         } else {
-            content.title = "Time for a Break!"
-            content.body = "You've been working for \(hours)h \(minutes)m. Take a 5-10 minute break."
-            content.sound = .default
-            print("🔊 FastSwitch: Notificación de trabajo (con sonido)")
+            content.title = "⚠️ Time for a Break! - Work Break"
+            content.body = "You've been working for \(hours)h \(minutes)m.\n\n🚶‍♂️ Take a 5-10 minute break to stay healthy.\n\n👆 Click to dismiss this reminder."
+            content.sound = UNNotificationSound(named: UNNotificationSoundName("Basso.aiff"))
+            print("🔊 FastSwitch: Notificación de trabajo")
         }
         
+        // Make notification more attention-grabbing
         content.categoryIdentifier = "BREAK_REMINDER"
+        content.badge = 1
+        content.interruptionLevel = .timeSensitive
         
+        // Add action buttons that require user interaction
+        let dismissAction = UNNotificationAction(
+            identifier: "DISMISS_ACTION",
+            title: "✅ Got it!",
+            options: []
+        )
+        
+        let snoozeAction = UNNotificationAction(
+            identifier: "SNOOZE_ACTION", 
+            title: "⏰ Remind me in 5 min",
+            options: []
+        )
+        
+        let category = UNNotificationCategory(
+            identifier: "BREAK_REMINDER",
+            actions: [dismissAction, snoozeAction],
+            intentIdentifiers: [],
+            options: [.customDismissAction]
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+        
+        let id = overrideIdentifier ?? "break-\(Int(sessionDuration))"
         let request = UNNotificationRequest(
-            identifier: "break-\(Int(sessionDuration))",
+            identifier: id,
             content: content,
             trigger: nil
         )
         
-        print("📤 FastSwitch: Enviando notificación...")
+        print("📤 FastSwitch: Enviando notificación persistente...")
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
                 print("❌ FastSwitch: Error enviando notificación: \(error)")
             } else {
-                print("✅ FastSwitch: Notificación enviada correctamente")
+                print("✅ FastSwitch: Notificación persistente enviada correctamente (id: \(id))")
             }
         }
+    }
+    
+    private func startStickyBreakNotifications() {
+        stopStickyBreakNotifications()
+        stickyBreakStartTime = Date()
+        
+        // primer envío inmediato con ID fijo
+        sendBreakNotification(sessionDuration: getCurrentSessionDuration(),
+                              overrideIdentifier: stickyBreakNotificationID)
+        
+        stickyBreakTimer = Timer.scheduledTimer(withTimeInterval: stickyRepeatInterval,
+                                                repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            guard let start = self.stickyBreakStartTime else { timer.invalidate(); return }
+            
+            if Date().timeIntervalSince(start) >= self.stickyMaxDuration {
+                print("⏹️ Sticky break: alcanzado tiempo máximo")
+                self.stopStickyBreakNotifications()
+                return
+            }
+            
+            print("🔁 Reenviando break sticky…")
+            self.sendBreakNotification(sessionDuration: self.getCurrentSessionDuration(),
+                                       overrideIdentifier: self.stickyBreakNotificationID)
+        }
+    }
+    
+    private func stopStickyBreakNotifications() {
+        stickyBreakTimer?.invalidate()
+        stickyBreakTimer = nil
+        stickyBreakStartTime = nil
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [stickyBreakNotificationID])
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [stickyBreakNotificationID])
+        print("🔕 FastSwitch: Sticky break notifications stopped")
     }
     
     private func updateStatusBarTitle(sessionDuration: TimeInterval) {
@@ -641,6 +1017,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 callToggleItem.title = "🔘 Marcar como llamada"
             }
         }
+        
+        // Update deep focus status
+        if let deepFocusItem = menu.item(withTag: 102) {
+            if isDeepFocusEnabled, let startTime = deepFocusStartTime {
+                let elapsed = Date().timeIntervalSince(startTime)
+                let remaining = max(0, 3600 - elapsed) // 60 minutes = 3600 seconds
+                let remainingMinutes = Int(remaining / 60)
+                deepFocusItem.title = "🧘 Deep Focus: ON (\(remainingMinutes)min left)"
+            } else {
+                deepFocusItem.title = "🧘 Deep Focus: OFF"
+            }
+        }
     }
     
     @objc private func toggleCallStatus() {
@@ -648,40 +1036,224 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("🔄 FastSwitch: Toggle manual de llamada: \(manualCallToggle)")
     }
     
+    @objc private func toggleDeepFocusFromMenu() {
+        toggleDeepFocus()
+    }
+    
+    @objc private func openNotificationsPrefs() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    // Uncomment if you want to toggle software sticky mode
+    /*
+    @objc private func toggleStickyMode() {
+        stickyRemindersEnabled.toggle()
+        print("🔄 FastSwitch: Modo sticky software: \(stickyRemindersEnabled ? "ON" : "OFF")")
+    }
+    */
+    
     @objc private func resetSession() {
         sessionStartTime = Date()
         totalActiveTime = 0
+        sentNotificationIntervals.removeAll()
         print("🔄 FastSwitch: Sesión reiniciada")
+    }
+    
+    private func updateConfigurationMenuState() {
+        guard let menu = statusItem.menu else { return }
+        
+        // Find the configuration submenu
+        var configSubmenu: NSMenu?
+        for item in menu.items {
+            if item.title == "⚙️ Configuración", let submenu = item.submenu {
+                configSubmenu = submenu
+                break
+            }
+        }
+        
+        guard let configMenu = configSubmenu else { return }
+        
+        // Clear all checkmarks first
+        for item in configMenu.items {
+            if item.tag >= 200 && item.tag <= 204 {
+                item.state = .off
+            }
+        }
+        
+        // Set checkmark for current mode
+        let tagToCheck: Int
+        switch currentNotificationMode {
+        case .testing:
+            tagToCheck = 200
+        case .interval45:
+            tagToCheck = 201
+        case .interval60:
+            tagToCheck = 202
+        case .interval90:
+            tagToCheck = 203
+        case .disabled:
+            tagToCheck = 204
+        }
+        
+        if let itemToCheck = configMenu.item(withTag: tagToCheck) {
+            itemToCheck.state = .on
+        }
     }
     
     // MARK: - Configuration Methods
     @objc private func setNotificationIntervalTest() {
         notificationIntervals = [60, 300, 600] // 1min, 5min, 10min para testing
         notificationsEnabled = true
+        currentNotificationMode = .testing
+        sentNotificationIntervals.removeAll() // Reset sent notifications when changing intervals
+        updateConfigurationMenuState()
         print("🧪 FastSwitch: Configurado en modo testing - Intervalos: 1min, 5min, 10min")
     }
     
     @objc private func setNotificationInterval45() {
         notificationIntervals = [2700, 5400, 8100] // 45min, 1.5hr, 2.25hr
         notificationsEnabled = true
+        currentNotificationMode = .interval45
+        sentNotificationIntervals.removeAll()
+        updateConfigurationMenuState()
         print("⏰ FastSwitch: Configurado intervalos 45min")
     }
     
     @objc private func setNotificationInterval60() {
         notificationIntervals = [3600, 7200, 10800] // 1hr, 2hr, 3hr
         notificationsEnabled = true
+        currentNotificationMode = .interval60
+        sentNotificationIntervals.removeAll()
+        updateConfigurationMenuState()
         print("⏰ FastSwitch: Configurado intervalos 60min")
     }
     
     @objc private func setNotificationInterval90() {
         notificationIntervals = [5400, 10800, 16200] // 1.5hr, 3hr, 4.5hr
         notificationsEnabled = true
+        currentNotificationMode = .interval90
+        sentNotificationIntervals.removeAll()
+        updateConfigurationMenuState()
         print("⏰ FastSwitch: Configurado intervalos 90min")
     }
     
     @objc private func disableNotifications() {
         notificationsEnabled = false
+        currentNotificationMode = .disabled
+        updateConfigurationMenuState()
         print("🔕 FastSwitch: Notificaciones deshabilitadas")
+    }
+    
+    // MARK: - UNUserNotificationCenterDelegate
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Show notification even when app is active
+        completionHandler([.alert, .sound, .badge])
+    }
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        switch response.actionIdentifier {
+        case "DISMISS_ACTION":
+            print("✅ FastSwitch: Usuario confirmó notificación de descanso")
+            // Stop sticky break notifications
+            stopStickyBreakNotifications()
+            // Clear badge
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "SNOOZE_ACTION":
+            print("⏰ FastSwitch: Usuario pospuso notificación por 5 minutos")
+            // Stop sticky break notifications
+            stopStickyBreakNotifications()
+            // Schedule a snooze notification in 5 minutes
+            scheduleSnoozeNotification()
+            
+        case "CONTINUE_FOCUS_ACTION":
+            print("🧘 FastSwitch: Usuario eligió continuar Deep Focus")
+            // Stop sticky notifications since user clicked
+            stopStickyDeepFocusNotification()
+            // Restart 60-minute timer
+            deepFocusTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
+                self?.showDeepFocusCompletionNotification()
+            }
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "TAKE_BREAK_ACTION":
+            print("☕ FastSwitch: Usuario eligió tomar descanso")
+            // Stop sticky notifications since user clicked
+            stopStickyDeepFocusNotification()
+            // Disable Deep Focus
+            if isDeepFocusEnabled {
+                toggleDeepFocus()
+            }
+            NSApp.dockTile.badgeLabel = nil
+            
+        case "DISMISS_FOCUS_ACTION":
+            print("✅ FastSwitch: Usuario confirmó notificación Deep Focus")
+            // Stop sticky notifications since user clicked
+            stopStickyDeepFocusNotification()
+            NSApp.dockTile.badgeLabel = nil
+            
+        case UNNotificationDefaultActionIdentifier:
+            // User tapped the notification itself
+            print("👆 FastSwitch: Usuario tocó la notificación")
+            // Stop sticky notifications based on notification type
+            let categoryIdentifier = response.notification.request.content.categoryIdentifier
+            if categoryIdentifier == "DEEP_FOCUS_COMPLETE" {
+                stopStickyDeepFocusNotification()
+            } else if categoryIdentifier == "BREAK_REMINDER" {
+                stopStickyBreakNotifications()
+            }
+            NSApp.dockTile.badgeLabel = nil
+            
+        default:
+            break
+        }
+        
+        completionHandler()
+    }
+    
+    private func scheduleSnoozeNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "⏰ Snooze Reminder"
+        content.body = "🔔 This is your 5-minute break reminder.\n\n🚶‍♂️ Don't forget to take that break!\n\n👆 Click to dismiss."
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("Ping.aiff"))
+        content.badge = 1
+        content.interruptionLevel = .timeSensitive
+        content.categoryIdentifier = "SNOOZE_REMINDER"
+        
+        // Create actions for snooze notification
+        let dismissAction = UNNotificationAction(
+            identifier: "DISMISS_SNOOZE_ACTION",
+            title: "✅ Got it!",
+            options: []
+        )
+        
+        let snoozeCategory = UNNotificationCategory(
+            identifier: "SNOOZE_REMINDER",
+            actions: [dismissAction],
+            intentIdentifiers: [],
+            options: [.customDismissAction]
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([snoozeCategory])
+        
+        // Schedule for 5 minutes from now
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 300, repeats: false) // 5 minutes
+        
+        let request = UNNotificationRequest(
+            identifier: "snooze-\(Int(Date().timeIntervalSince1970))",
+            content: content,
+            trigger: trigger
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error programando snooze: \(error)")
+            } else {
+                print("✅ FastSwitch: Snooze programado para 5 minutos")
+            }
+        }
     }
 }
 

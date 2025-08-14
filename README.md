@@ -67,6 +67,11 @@ FastSwitch is a lightweight macOS menu-bar app that lets you switch to your favo
   ```
 * Rebuild after making changes.
 
+## Reset permissions
+
+tccutil reset Accessibility Bandonea.FastSwitch
+tccutil reset AppleEvents Bandonea.FastSwitch    
+
 ## License
 
 MIT
