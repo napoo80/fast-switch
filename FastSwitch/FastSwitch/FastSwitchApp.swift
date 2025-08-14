@@ -1,6 +1,5 @@
 import SwiftUI
 
-@main
 struct FastSwitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 

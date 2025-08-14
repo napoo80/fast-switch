@@ -115,7 +115,6 @@
 				3D8BACDC2E479D39007B545D /* Sources */,
 				3D8BACDD2E479D39007B545D /* Frameworks */,
 				3D8BACDE2E479D39007B545D /* Resources */,
-				3D4F90642E49167800C3BC21 /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -244,29 +243,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		3D4F90642E49167800C3BC21 /* ShellScript */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"$(SRCROOT)/newInputFile.xcfilelist",
-			);
-			inputPaths = (
-				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)",
-			);
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"/Applications/$(PRODUCT_NAME).app",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\nSRC=\"${SCRIPT_INPUT_FILE_0}\"          # $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)\nDST=\"${SCRIPT_OUTPUT_FILE_0}\"         # /Applications/$(PRODUCT_NAME).app\n\nAPP_NAME=\"$(basename \"$DST\")\"\nDST_DIR=\"$(dirname \"$DST\")\"\n\n# Si /Applications no es escribible, vamos a ~/Applications\nif [[ ! -w \"$DST_DIR\" ]]; then\n  DST_DIR=\"$HOME/Applications\"\n  mkdir -p \"$DST_DIR\"\n  DST=\"$DST_DIR/$APP_NAME\"\nfi\n\necho \"→ Installing $APP_NAME\"\necho \"   SRC: $SRC\"\necho \"   DST: $DST\"\n\n# Cerrar la app si está corriendo\nBID=\"${PRODUCT_BUNDLE_IDENTIFIER:-}\"\nif [[ -n \"$BID\" ]]; then\n/usr/bin/osascript <<EOF\n  tell application \"System Events\"\n    set isRunning to (exists process whose bundle identifier is \"$BID\")\n  end tell\n  if isRunning then\n    try\n      tell application id \"$BID\" to quit\n    end try\n    repeat 50 times\n      delay 0.1\n      tell application \"System Events\"\n        if not (exists process whose bundle identifier is \"$BID\") then exit repeat\n      end tell\n    end repeat\n  end if\nEOF\nfi\n\n# Reemplazar\nrm -rf \"$DST\"\n/usr/bin/ditto \"$SRC\" \"$DST\"\n/usr/bin/xattr -dr com.apple.quarantine \"$DST\" 2>/dev/null || true\n\necho \"✅ Installed → $DST\"\n# open \"$DST\"   # descomentá si querés auto-abrir\n\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3D8BACDC2E479D39007B545D /* Sources */ = {

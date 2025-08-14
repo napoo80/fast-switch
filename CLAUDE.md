@@ -35,6 +35,7 @@ xcodebuild test -scheme FastSwitch -destination 'platform=macOS'
   - F-key to app bundle ID mapping configuration
   - Double-tap detection for in-app actions
   - AppleScript automation for app interactions
+  - Computer usage tracking and break notifications
 
 ### Key Architecture Patterns
 
@@ -42,6 +43,7 @@ xcodebuild test -scheme FastSwitch -destination 'platform=macOS'
 2. **Global Hotkeys**: Carbon Event Manager for system-wide F-key capture
 3. **App Activation**: NSWorkspace for launching/focusing apps by bundle ID
 4. **Automation**: AppleScript via NSAppleScript for sending keystrokes and app control
+5. **Usage Tracking**: CGEventSource API for activity detection and Timer-based session management
 
 ### Configuration
 
@@ -67,10 +69,19 @@ Some F-keys trigger custom actions instead of apps:
 - `action:meet-cam` (F6): Google Meet camera toggle (⌘E)
 - `action:insta360-track` (F7): Insta360 Link Controller AI tracking (⌥T)
 
+### Usage Tracking Feature
+
+- **Session Tracking**: Monitors computer usage time using CGEventSource API
+- **Call Detection**: Automatically detects video calls (Meet, Zoom, Teams) and adjusts idle thresholds
+- **Smart Notifications**: Context-aware break reminders with different behavior during calls
+- **Manual Controls**: Menu bar toggle for call status and session reset
+- **Configurable Intervals**: 45min, 60min, or 90min notification intervals
+
 ### Permissions Required
 
 - **Accessibility**: For global hotkey registration and keystroke automation
 - **Automation**: For controlling specific apps (Chrome, Spotify, System Events)
+- **Notifications**: For break reminder notifications
 
 ## Development Notes
 
