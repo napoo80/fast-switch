@@ -1,0 +1,256 @@
+{
+  "phrases": [
+    {
+      "id": "process_1",
+      "category": "proceso",
+      "text": "Concéntrate en el proceso no en el resultado",
+      "contexts": ["break", "stress", "work_session"],
+      "weight": 1.0
+    },
+    {
+      "id": "consistency_1",
+      "category": "proceso",
+      "text": "La consistencia vence al talento",
+      "contexts": ["morning", "work_session"],
+      "weight": 1.0
+    },
+    {
+      "id": "small_steps_1",
+      "category": "proceso",
+      "text": "Pequeños pasos, grandes logros",
+      "contexts": ["morning", "break", "reflection"],
+      "weight": 1.0
+    },
+    {
+      "id": "opportunity_1",
+      "category": "inicio",
+      "text": "Cada día es una nueva oportunidad",
+      "contexts": ["morning", "workday_start"],
+      "weight": 1.0
+    },
+    {
+      "id": "best_work_1",
+      "category": "inicio",
+      "text": "Tu mejor trabajo está por delante",
+      "contexts": ["morning", "workday_start"],
+      "weight": 1.0
+    },
+    {
+      "id": "better_today_1",
+      "category": "inicio",
+      "text": "Hoy puedes ser mejor que ayer",
+      "contexts": ["morning", "workday_start"],
+      "weight": 1.0
+    },
+    {
+      "id": "rest_work_1",
+      "category": "descanso",
+      "text": "El descanso es parte del trabajo",
+      "contexts": ["break", "tired"],
+      "weight": 1.0
+    },
+    {
+      "id": "recharge_productive_1",
+      "category": "descanso",
+      "text": "Recargar energías es productivo",
+      "contexts": ["break", "tired", "energy_low"],
+      "weight": 1.0
+    },
+    {
+      "id": "care_mind_1",
+      "category": "descanso",
+      "text": "Cuida tu mente como cuidas tu código",
+      "contexts": ["break", "stress", "energy_low"],
+      "weight": 1.0
+    },
+    {
+      "id": "what_learned_1",
+      "category": "reflexion",
+      "text": "¿Qué aprendiste hoy?",
+      "contexts": ["reflection", "end_day"],
+      "weight": 1.0
+    },
+    {
+      "id": "celebrate_progress_1",
+      "category": "reflexion",
+      "text": "Celebra el progreso, no solo los logros",
+      "contexts": ["reflection", "end_day"],
+      "weight": 1.0
+    },
+    {
+      "id": "growth_reflection_1",
+      "category": "reflexion",
+      "text": "El crecimiento está en la reflexión",
+      "contexts": ["reflection", "end_day"],
+      "weight": 1.0
+    },
+    {
+      "id": "breathe_1",
+      "category": "estres",
+      "text": "Respira, esto también pasará",
+      "contexts": ["stress", "energy_low", "overwhelmed"],
+      "weight": 1.0
+    },
+    {
+      "id": "stress_temporary_1",
+      "category": "estres",
+      "text": "El estrés es temporal, la calma es eterna",
+      "contexts": ["stress", "overwhelmed"],
+      "weight": 1.0
+    },
+    {
+      "id": "progress_perfection_1",
+      "category": "proceso",
+      "text": "El progreso es más importante que la perfección",
+      "contexts": ["work_session", "stress", "perfectionism"],
+      "weight": 1.0
+    },
+    {
+      "id": "focus_journey_1",
+      "category": "proceso",
+      "text": "Disfruta el viaje, no solo el destino",
+      "contexts": ["work_session", "reflection"],
+      "weight": 1.0
+    },
+    {
+      "id": "energy_precious_1",
+      "category": "energia",
+      "text": "Tu energía es preciosa, úsala sabiamente",
+      "contexts": ["energy_check", "afternoon", "tired"],
+      "weight": 1.0
+    },
+    {
+      "id": "pause_power_1",
+      "category": "descanso",
+      "text": "Una pausa a tiempo es un poder",
+      "contexts": ["break", "tired", "long_session"],
+      "weight": 1.0
+    },
+    {
+      "id": "balance_key_1",
+      "category": "equilibrio",
+      "text": "El equilibrio es la clave de la productividad sostenible",
+      "contexts": ["afternoon", "reflection", "balance"],
+      "weight": 1.0
+    },
+    {
+      "id": "mindful_work_1",
+      "category": "mindfulness",
+      "text": "Trabaja con intención, descansa sin culpa",
+      "contexts": ["work_session", "break", "mindful"],
+      "weight": 1.0
+    },
+    {
+      "id": "mate_wisdom_1",
+      "category": "cultura",
+      "text": "El mate acompaña, pero la moderación nutre",
+      "contexts": ["afternoon", "mate_check", "balance"],
+      "weight": 1.0
+    },
+    {
+      "id": "sugar_balance_1",
+      "category": "salud",
+      "text": "El azúcar da energía rápida, el equilibrio da energía duradera",
+      "contexts": ["afternoon", "mate_check", "energy_check"],
+      "weight": 1.0
+    },
+    {
+      "id": "hydration_1",
+      "category": "salud",
+      "text": "Tu cuerpo es tu herramienta más valiosa, cuídalo",
+      "contexts": ["afternoon", "mate_check", "health"],
+      "weight": 1.0
+    },
+    {
+      "id": "testing_visible",
+      "category": "testing",
+      "text": "🚀 TESTING: Si puedes leer esto, las frases funcionan perfectamente!",
+      "contexts": ["afternoon", "mate_check", "energy_check", "morning", "break"],
+      "weight": 100.0
+    },
+    {
+      "id": "mate_reduction_progress",
+      "category": "wellness",
+      "text": "Cada termo menos es un paso hacia mejor sueño y menos ansiedad",
+      "contexts": ["mate_progress", "mate_target_reached"],
+      "weight": 8.0
+    },
+    {
+      "id": "mate_schedule_reminder",
+      "category": "wellness", 
+      "text": "El ritual importa más que la cantidad. Disfrutá cada mate conscientemente",
+      "contexts": ["mate_reminder"],
+      "weight": 7.0
+    },
+    {
+      "id": "mate_phase_motivation",
+      "category": "motivation",
+      "text": "¡Avanzaste de fase! Tu cuerpo ya se está adaptando al cambio",
+      "contexts": ["mate_phase_advance"],
+      "weight": 9.0
+    },
+    {
+      "id": "mate_target_reached_celebration",
+      "category": "celebration",
+      "text": "🎯 Objetivo cumplido. Mañana será más fácil",
+      "contexts": ["mate_target_reached"],
+      "weight": 8.5
+    },
+    {
+      "id": "eye_care_1",
+      "category": "salud",
+      "text": "Tus ojos son tu herramienta más valiosa. 20-20-20: cada 20min, mirá 20 segundos algo a 20 metros",
+      "contexts": ["eye_care"],
+      "weight": 7.0
+    },
+    {
+      "id": "posture_care_1",
+      "category": "salud",
+      "text": "Tu columna te sostiene todo el día. Dale un break y estirá esos músculos",
+      "contexts": ["posture_care"],
+      "weight": 7.5
+    },
+    {
+      "id": "hydration_1",
+      "category": "salud",
+      "text": "El cerebro es 75% agua. Hidrátalo bien para pensar claro",
+      "contexts": ["hydration"],
+      "weight": 7.2
+    },
+    {
+      "id": "breathing_1",
+      "category": "mindfulness",
+      "text": "Una respiración consciente resetea el sistema nervioso",
+      "contexts": ["breathing"],
+      "weight": 8.0
+    },
+    {
+      "id": "movement_1",
+      "category": "energia",
+      "text": "El movimiento genera energía. Levántate y activá la circulación",
+      "contexts": ["movement"],
+      "weight": 7.8
+    },
+    {
+      "id": "journal_reflection_1",
+      "category": "reflexion",
+      "text": "Escribir tus pensamientos es darles forma y propósito",
+      "contexts": ["end_day", "reflection", "journal"],
+      "weight": 6.5
+    },
+    {
+      "id": "day_gratitude_1",
+      "category": "gratitud",
+      "text": "¿Qué te hizo sonreír hoy? Recordar lo bueno nutre el alma",
+      "contexts": ["end_day", "reflection"],
+      "weight": 7.0
+    },
+    {
+      "id": "tomorrow_preparation_1",
+      "category": "reflexion",
+      "text": "Hoy plantás las semillas de lo que cosecharás mañana",
+      "contexts": ["end_day", "reflection"],
+      "weight": 6.8
+    }
+  ]
+}
