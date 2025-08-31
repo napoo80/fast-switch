@@ -339,10 +339,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         UInt32(kVK_F3):  "com.todesktop.230313mzl4w4u92",   // 1 tap: Cursor, 2 taps: Ctrl+W (Window Switcher)
         UInt32(kVK_F4):  "com.apple.finder",
 
-        UInt32(kVK_F5):  "action:meet-mic",                 // ⌘D (Meet)
+        //UInt32(kVK_F5):  "action:meet-mic",                 // ⌘D (Meet)
         //UInt32(kVK_F6):  "action:meet-cam",                 // ⌘E (Meet)
         //UInt32(kVK_F7):  "action:deep-focus",               // enables/disables focus
         
+        
+        UInt32(kVK_F5):  "action:dasung-refresh",
         UInt32(kVK_F6):  "action:paperlike",               // placeholder
         UInt32(kVK_F7):  "action:paperlike-plus",          // placeholder
         
@@ -582,6 +584,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             case "action:meet-cam": toggleMeetCam()
             case "action:deep-focus": toggleDeepFocus()
             case "action:insta360-track": toggleInsta360Tracking()
+            case "action:dasung-refresh":
+                DasungRefresher.shared.refreshPaperlike()
             case "action:paperlike": togglePaperlikeMode()
             case "action:paperlike-plus": toggleGlobalGrayscale()
             default: break
@@ -3112,11 +3116,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             options: []
         )
         
-        let quickMoodAction4 = UNNotificationAction(
-            identifier: "MOOD_STRESSED",
-            title: "😤 Estresado",
-            options: []
-        )
+        //let quickMoodAction4 = UNNotificationAction(
+        //    identifier: "MOOD_STRESSED",
+        //    title: "😤 Estresado",
+        //    options: []
+        //)
         
         let category = UNNotificationCategory(
             identifier: "DAILY_REFLECTION",

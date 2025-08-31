@@ -6,6 +6,8 @@
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
@@ -14,13 +16,13 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>11.0</string>
+
+	<!-- Menubar-only app (sin Dock/App Switcher) -->
 	<key>LSUIElement</key>
 	<true/>
+
+	<!-- Permiso de Automatización (Apple Events) -->
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Necesito controlar Google Chrome y System Events para enviar atajos a tus reuniones.</string>
-	<key>NSUserNotificationsUsageDescription</key>
-	<string>FastSwitch te envía recordatorios para tomar descansos mientras trabajas.</string>
+	<string>FastSwitch usa Automatización para controlar apps (abrir ventanas, enviar atajos) y mejorar tu flujo de trabajo.</string>
 </dict>
 </plist>
