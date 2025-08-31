@@ -6,6 +6,24 @@
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
+      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Run Script"
+               scriptText = "# Type a script or drag a script file from your workspace to insert its path.&#10;set -euo pipefail&#10;&#10;DEST=&quot;$HOME/apps/FastSwitch.app&quot;&#10;&#10;APP=&quot;${CODESIGNING_FOLDER_PATH:-&quot;${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}&quot;}&quot;&#10;&#10;rm -rf &quot;$DEST&quot;&#10;/usr/bin/ditto &quot;$APP&quot; &quot;$DEST&quot;&#10;xattr -dr com.apple.quarantine &quot;$DEST&quot; || true&#10;open &quot;$DEST&quot;&#10;">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "3D8BACDF2E479D39007B545D"
+                     BuildableName = "FastSwitch.app"
+                     BlueprintName = "FastSwitch"
+                     ReferencedContainer = "container:FastSwitch.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
