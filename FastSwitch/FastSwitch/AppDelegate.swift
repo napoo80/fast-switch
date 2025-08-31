@@ -5,6 +5,8 @@ import UserNotifications
 import Foundation
 import UniformTypeIdentifiers
 
+
+
 // MARK: - Data Structures for Persistent Storage
 struct SessionRecord: Codable {
     let start: Date
@@ -338,8 +340,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         UInt32(kVK_F4):  "com.apple.finder",
 
         UInt32(kVK_F5):  "action:meet-mic",                 // ⌘D (Meet)
-        UInt32(kVK_F6):  "action:meet-cam",                 // ⌘E (Meet)
-        UInt32(kVK_F7):  "action:deep-focus",               // enables/disables focus
+        //UInt32(kVK_F6):  "action:meet-cam",                 // ⌘E (Meet)
+        //UInt32(kVK_F7):  "action:deep-focus",               // enables/disables focus
+        
+        UInt32(kVK_F6):  "action:paperlike",               // placeholder
+        UInt32(kVK_F7):  "action:paperlike-plus",          // placeholder
+        
         UInt32(kVK_F8):  "com.spotify.client",
         UInt32(kVK_F9):  "com.tinyspeck.slackmacgap",
         UInt32(kVK_F10): "notion.id",
@@ -355,9 +361,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Menu-bar only (hide Dock & app switcher)
         NSApp.setActivationPolicy(.accessory)
 
-        // Ask for Accessibility if needed
+        
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+
         
         // Request notification permissions and set delegate
         requestNotificationPermissions()
@@ -567,6 +575,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             case "action:meet-cam": toggleMeetCam()
             case "action:deep-focus": toggleDeepFocus()
             case "action:insta360-track": toggleInsta360Tracking()
+            case "action:paperlike": togglePaperlikeMode()
+            case "action:paperlike-plus": toggleGlobalGrayscale()
             default: break
             }
             return
@@ -1956,7 +1966,115 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
         completion?()
     }
+    
+    
 
+    // Detecta binarios en Apple Silicon/Intel
+    private func bin(_ name: String) -> String {
+        for p in ["/opt/homebrew/bin","/usr/local/bin","/usr/bin"] {
+            let path = "\(p)/\(name)"
+            if FileManager.default.isExecutableFile(atPath: path) { return path }
+        }
+        return name
+    }
+    
+    
+    
+    @discardableResult
+    private func run(_ exe: String, _ args: [String]) -> Int32 {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+        try? p.run(); p.waitUntilExit(); return p.terminationStatus
+    }
+    
+    
+    @discardableResult
+    private func sh(_ exe: String, _ args: [String] = []) -> Int32 {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+        try? p.run(); p.waitUntilExit(); return p.terminationStatus
+    }
+    
+    
+    // E-ink nítido (HiDPI). Probá 60 Hz primero; si notás glitches, cambiá a 40 Hz.
+    private let paperlikePreset = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:2200x1650 hz:60 color_depth:8 scaling:on origin:(1512,0) degree:0"#
+
+    // Volver a tu modo actual del DASUNG
+    private let desktopPreset   = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:800x600 hz:40 color_depth:8 scaling:on origin:(1512,0) degree:0"#
+
+    
+    // Añade estas props (cerca de tus otras config vars)
+    private var paperlikeEnabled = false
+    private let paperlikeICCName = "Generic Gray Gamma 2.2" // cámbialo si elegiste otro
+    private var grayscaleOn = false
+
+    
+
+    private func togglePaperlikeMode() {
+        paperlikeEnabled.toggle()
+        let dp = "/opt/homebrew/bin/displayplacer"  // o /usr/local/bin si fuera Intel
+        _ = sh(dp, [paperlikeEnabled ? paperlikePreset : desktopPreset])
+        
+        //if paperlikeEnabled {
+        //    // Perfil de color en gris SOLO para el DASUNG
+        //    _ = run(dprof, ["apply", paperlikeICCName])
+        //}
+        
+        if paperlikeEnabled {
+            applyGrayICCtoDasung(iccName: "Generic Gray Gamma 2.2")
+        }
+        print("🖥️ Paperlike \(paperlikeEnabled ? "ON" : "OFF")")
+    }
+    
+    private func toggleGlobalGrayscale() {
+        grayscaleOn.toggle()
+        let on = grayscaleOn ? "true" : "false"
+
+        // habilitar/deshabilitar filtro
+        _ = sh("/usr/bin/defaults", ["write","com.apple.universalaccess","colorFilterEnabled","-bool", on])
+
+        if grayscaleOn {
+            // 0 = Grayscale (otros tipos: 1 daltonismo/2…); intensidad 1.0
+            _ = sh("/usr/bin/defaults", ["write","com.apple.universalaccess","colorFilterType","-int","0"])
+            _ = sh("/usr/bin/defaults", ["write","com.apple.universalaccess","colorFilterIntensity","-float","1.0"])
+        }
+
+        // refrescar
+        _ = sh("/usr/bin/killall", ["SystemUIServer"])
+        print("🎛️ Grayscale global \(grayscaleOn ? "ON" : "OFF")")
+    }
+
+    
+    private func applyGrayICCtoDasung(iccName: String = "Generic Gray Gamma 2.2") {
+        let script = #"""
+        tell application "System Settings" to activate
+        delay 0.5
+        tell application "System Events"
+          tell process "System Settings"
+            -- Ir al panel Displays
+            try
+              click menu item "Displays" of menu "View" of menu bar 1
+            end try
+            delay 0.5
+            -- Buscar el grupo del monitor DASUNG/Paperlike
+            set targetGroup to missing value
+            repeat with g in (groups of scroll area 1 of window 1)
+              set desc to (value of attribute "AXDescription" of g) as text
+              if desc contains "DASUNG" or desc contains "Paperlike" then
+                set targetGroup to g
+                exit repeat
+              end if
+            end repeat
+            if targetGroup is missing value then return
+            -- Abrir pop-up "Color profile" y elegir ICC
+            click pop up button 1 of targetGroup
+            delay 0.2
+            click menu item iccName of menu 1 of pop up button 1 of targetGroup
+          end tell
+        end tell
+        """#
+        runAppleScript(script)
+    }
+    
+    
     // MARK: - Spotify (bundle id)
     private func playPauseSpotifyWithRetry() {
         func tryPlay(_ remaining: Int) {
@@ -3952,5 +4070,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             mateItem.title = "🧉 Fase \(phase): \(todayMateCount)/\(target) termos \(status)"
         }
     }
+    
+    
+    
 }
+
 

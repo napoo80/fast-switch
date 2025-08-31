@@ -181,6 +181,8 @@ final class WallpaperPhraseManager {
     }
 }
 
+
+
 // ==============================================================
 // INTEGRACIÓN con tu AppDelegate existente
 // --------------------------------------------------------------
@@ -270,26 +272,25 @@ extension AppDelegate {
             wpRoot.item(withTag: tag)?.state = (current == secs) ? .on : .off
         }
     }
+    
+    func updateWallpaperMenuState(_ menu: NSMenu) {
+        // Buscamos el submenu que contiene nuestro toggle por tag
+        let submenus = menu.items.compactMap { $0.submenu }
+        guard let wpRoot = submenus.first(where: { $0.item(withTag: WPTag.toggle) != nil }) else { return }
+
+        // Título del toggle
+        if let toggle = wpRoot.item(withTag: WPTag.toggle) {
+            let mins = Int(WallpaperPhraseManager.shared.interval / 60)
+            toggle.title = WallpaperPhraseManager.shared.isEnabled ? "ON (\(mins)m)" : "OFF"
+        }
+
+        // Marcar el intervalo activo (⚠️ tipado explícito para evitar “Cannot infer .on”)
+        let current = Int(WallpaperPhraseManager.shared.interval)
+        let pairs: [(Int, Int)] = [(WPTag.i15, 900), (WPTag.i30, 1800), (WPTag.i60, 3600)]
+        for (tag, secs) in pairs {
+            let state: NSControl.StateValue = (current == secs) ? .on : .off
+            wpRoot.item(withTag: tag)?.state = state
+        }
+    }
 }
 
-/*
-USO RÁPIDO
----------
-1) Agregá este archivo al proyecto.
-2) En tu AppDelegate.applicationDidFinishLaunching(_:) justo después de construir el menú principal, llamá:
-
-    // ... ya creaste `menu` y lo asignaste a statusItem.menu
-    injectWallpaperMenu(into: menu)
-
-3) (Opcional) Para arrancar ON desde el inicio:
-
-    let frases = motivationalPhrases.isEmpty ? ["Pequeños pasos, grandes logros"] : motivationalPhrases.map { $0.text }
-    WallpaperPhraseManager.shared.start(phrases: frases, interval: 30*60)
-
-Notas
------
-- El manager renderiza un PNG por pantalla, reutilizando el wallpaper actual como fondo + una caja translúcida con la frase.
-- Al detener (stop), restaura el wallpaper original.
-- Evita repetir la misma frase consecutivamente.
-- Podés reemplazar la tipografía/estilo dentro de `renderPhrase(_:for:)`.
-*/
