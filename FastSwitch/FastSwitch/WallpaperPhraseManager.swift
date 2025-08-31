@@ -8,6 +8,7 @@
 
 import AppKit
 import Foundation
+import CoreGraphics // arriba si no está
 
 // MARK: - NSScreen helper
 private extension NSScreen {
@@ -21,6 +22,9 @@ private extension NSScreen {
 final class WallpaperPhraseManager {
     static let shared = WallpaperPhraseManager()
     private init() {}
+    
+    
+    
 
     // Public API
     var isEnabled: Bool { timer != nil }
@@ -79,13 +83,14 @@ final class WallpaperPhraseManager {
     private func applyPhraseWallpaper() {
         let phrase = nextPhrase()
         for screen in NSScreen.screens {
+            if isEInk(screen) { continue }           // ⬅️ nuevo: saltear el DASUNG
             do {
                 let url = try renderPhrase(phrase, for: screen)
                 setWallpaper(url: url, on: screen)
             } catch {
                 NSLog("[Wallpaper] render error: \(error)")
             }
-        }
+}
     }
 
     private func nextPhrase() -> String {
@@ -179,5 +184,22 @@ final class WallpaperPhraseManager {
         try data.write(to: out, options: .atomic)
         return out
     }
+    
+    private func isEInk(_ screen: NSScreen) -> Bool {
+        let name = screen.localizedName.lowercased()
+        if name.contains("dasung") || name.contains("paperlike") { return true }
+        // Comparar por UUID para máxima precisión
+        if let u = CGDisplayCreateUUIDFromDisplayID(screen.displayID) {
+            let str = (CFUUIDCreateString(nil, u as! CFUUID) as String)
+            if str.caseInsensitiveCompare(DasungRefresher.shared.dasungDisplayID) == .orderedSame {
+                return true
+            }
+        }
+        // Heurística de backup:
+        let sz = screen.frame.size
+        if sz.width <= 2200 && sz.height <= 1650 && screen.backingScaleFactor == 1.0 { return true }
+        return false
+    }
+
 }
 

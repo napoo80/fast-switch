@@ -1,101 +1,120 @@
-//
-//  DasungRefresher.swift
-//  FastSwitch
-//
-//  Created by Gaston on 31/08/2025.
-//
-
 import Cocoa
 import Foundation
+import CoreGraphics
 
-/// Lightweight, zero-dependency DASUNG refresher
-/// Strategy A: rotate 180° and back via `displayplacer` (forces full e-ink repaint)
-/// Strategy B: quick black→white flash fullscreen on the Paperlike screen
+// MARK: - NSScreen helpers
+extension NSScreen {
+    /// CGDirectDisplayID del screen a partir del deviceDescription.
+    var cgID: CGDirectDisplayID? {
+        guard let num = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+        return CGDirectDisplayID(num.uint32Value)
+    }
+
+    /// UUID legible (igual al de `displayplacer list`).
+    var displayUUIDString: String? {
+        guard let id = cgID,
+              let unmanaged = CGDisplayCreateUUIDFromDisplayID(id) else { return nil }
+        let uuid: CFUUID = unmanaged.takeRetainedValue()
+        return CFUUIDCreateString(kCFAllocatorDefault, uuid) as String
+    }
+}
+
+/// Refresher para DASUNG: intenta DDC (m1ddc) → displayplacer → flash negro/blanco.
 final class DasungRefresher {
 
     static let shared = DasungRefresher()
 
-    /// Set this once if you know the Paperlike display UUID (from `displayplacer list`)
-    /// You already used this id in your presets:
-    ///   id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA
-    /// If yours differs, change the value below.
-    var dasungDisplayID = "1E6E43E3-2C58-43E0-8813-B7079CD9FEFA"
+    /// Cambiá este UUID por el real de tu Paperlike (de `displayplacer list`).
+    var dasungDisplayUUID = "1E6E43E3-2C58-43E0-8813-B7079CD9FEFA"
+    
+    var useRotationHop = false
 
-    /// Top-level “refresh” you’ll call from F5
-    func refreshPaperlike() {
-        if refreshViaDisplayplacerRotationHop() == false {
-            // If displayplacer isn’t present or the id didn’t match, do a visual flash fallback.
-            refreshViaFlashFallback()
-        }
+
+    /// Alias para compatibilidad con código viejo que usa `dasungDisplayID`.
+    var dasungDisplayID: String {
+        get { dasungDisplayUUID }
+        set { dasungDisplayUUID = newValue }
     }
 
-    // MARK: - Strategy A: rotation hop with displayplacer
+    // ————— API pública —————
+    //func refreshPaperlike() {
+    //    if refreshViaDDC() { return }
+    //    if refreshViaDisplayplacerRotationHop() { return }
+    //    refreshViaFlashFallback()
+    //}
+    
+    func refreshPaperlike() {
+        if refreshViaDDC() { return }
+        // ✅ La rotación solo corre si vos la habilitás explícitamente
+        if useRotationHop, refreshViaDisplayplacerRotationHop() { return }
+        refreshViaFlashFallback()
+    }
+    // MARK: A) DDC con m1ddc (opcional)
+    private func refreshViaDDC() -> Bool {
+        guard let tool = pathTo("m1ddc") else { return false }
+        // m1ddc displayuuid:UUID set vcp 0x06 0x03  → “clear screen” en Paperlike
+        let status = run(tool, ["displayuuid:\(dasungDisplayUUID)", "set", "vcp", "0x06", "0x03"])
+        if status == 0 { print("✅ DASUNG refresh via DDC") }
+        return status == 0
+    }
 
+    // MARK: B) Hop de rotación con displayplacer (180° → 0°)
     @discardableResult
     private func refreshViaDisplayplacerRotationHop() -> Bool {
         guard let dp = pathTo("displayplacer") else { return false }
-
-        // Two very fast calls: rotate 180°, then back to 0°.
-        // Only targets the DASUNG by id; it won’t disturb other displays.
-        let hop1 = #"id:\#(dasungDisplayID) degree:180"#
-        let hop2 = #"id:\#(dasungDisplayID) degree:0"#
-
-        let ok1 = run(dp, [hop1]) == 0
-        if !ok1 { return false }
-
-        // tiny delay to let the compositor flip frames (kept super short)
+        let hop1 = "id:\(dasungDisplayUUID) degree:180"
+        let hop2 = "id:\(dasungDisplayUUID) degree:0"
+        guard run(dp, [hop1]) == 0 else { return false }
         usleep(120_000) // 120 ms
-
-        let ok2 = run(dp, [hop2]) == 0
-        return ok2
+        let ok = run(dp, [hop2]) == 0
+        if ok { print("✅ DASUNG refresh via displayplacer rotation") }
+        return ok
     }
 
-    // MARK: - Strategy B: fullscreen black→white flash (no external tools)
-
+    // MARK: C) Fallback: flash negro → blanco sólo en la pantalla DASUNG
     private var flashWindow: NSWindow?
 
     private func refreshViaFlashFallback() {
-        guard let screen = locateDasungScreen() ?? NSScreen.screens.last else { return }
+        guard let scr = screen(forUUID: dasungDisplayUUID) ?? locateDasungScreen() else {
+            print("❌ No encontré la pantalla DASUNG"); return
+        }
 
-        // Build a borderless, always-on-top window on the Paperlike screen
-        let w = NSWindow(
-            contentRect: screen.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false,
-            screen: screen
-        )
-        w.level = .screenSaver
+        let frame = scr.frame
+        let w = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false, screen: scr)
+        // cast explícito para evitar el error de tipos
+        w.level = NSWindow.Level(Int(CGShieldingWindowLevel()) + 1)
         w.isOpaque = true
         w.backgroundColor = .black
         w.ignoresMouseEvents = true
-        w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        w.makeKeyAndOrderFront(nil)
+        w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        w.setFrame(frame, display: true)
+        w.orderFrontRegardless()
         self.flashWindow = w
 
-        // Black → White → remove (fast). This hard-refreshes the e-ink panel visually.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
             self?.flashWindow?.backgroundColor = .white
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
                 self?.flashWindow?.orderOut(nil)
                 self?.flashWindow = nil
+                print("✅ DASUNG refresh via flash")
             }
         }
     }
 
-    // MARK: - Helpers
+    // MARK: Helpers
 
-    /// Try to find the DASUNG screen by its human name first, else nil.
-    private func locateDasungScreen() -> NSScreen? {
-        let targets = ["DASUNG", "Paperlike", "Paperlike HD", "Paperlike-HD"]
-        if let named = NSScreen.screens.first(where: { s in
-            let name = s.localizedName.uppercased()
-            return targets.contains(where: { name.contains($0.uppercased()) })
-        }) { return named }
-        return nil
+    private func screen(forUUID uuid: String) -> NSScreen? {
+        NSScreen.screens.first { $0.displayUUIDString?.caseInsensitiveCompare(uuid) == .orderedSame }
     }
 
-    /// Resolve an executable in common Homebrew/System paths.
+    /// Fallback por nombre humano.
+    private func locateDasungScreen() -> NSScreen? {
+        let targets = ["DASUNG", "PAPERLIKE", "PAPERLIKE HD", "PAPERLIKE-HD"]
+        return NSScreen.screens.first { s in
+            targets.contains { s.localizedName.uppercased().contains($0) }
+        }
+    }
+
     private func pathTo(_ name: String) -> String? {
         for base in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
             let p = base + "/" + name
@@ -104,11 +123,21 @@ final class DasungRefresher {
         return nil
     }
 
+    /// Ejecuta un binario y devuelve el status.
     @discardableResult
     private func run(_ exe: String, _ args: [String]) -> Int32 {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: exe)
         p.arguments = args
-        do { try p.run(); p.waitUntilExit(); return p.terminationStatus } catch { return -1 }
+        do { try p.run(); p.waitUntilExit(); return p.terminationStatus }
+        catch { return -1 }
+    }
+
+    /// Útil para ver los UUID que macOS detecta.
+    func debugDumpDisplays() {
+        for s in NSScreen.screens {
+            print("🖥️ \(s.localizedName) — uuid: \(s.displayUUIDString ?? "nil") frame: \(s.frame)")
+        }
     }
 }
+

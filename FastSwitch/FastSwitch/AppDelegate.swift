@@ -2006,7 +2006,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     
     // E-ink nítido (HiDPI). Probá 60 Hz primero; si notás glitches, cambiá a 40 Hz.
-    private let paperlikePreset = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:2200x1650 hz:60 color_depth:8 scaling:on origin:(1512,0) degree:0"#
+    private let paperlikePreset = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:1100X825 hz:40 color_depth:8 scaling:on origin:(1512,0) degree:0"#  
 
     // Volver a tu modo actual del DASUNG
     private let desktopPreset   = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:800x600 hz:40 color_depth:8 scaling:on origin:(1512,0) degree:0"#

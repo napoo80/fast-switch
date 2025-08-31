@@ -91,11 +91,60 @@ python3 usage_analyzer.py FastSwitch-Usage-Data-2024-08-14.json
 
 ## Reset permissions
 
+ 
+
+
+## 🧹 Limpieza Completa de FastSwitch
+
+1. Cerrar la app:
+pkill -f FastSwitch
+
+1. Borrar todos los datos persistentes:
+# UserDefaults
+defaults delete Bandonea.FastSwitch 2>/dev/null || true
 tccutil reset Accessibility Bandonea.FastSwitch
-tccutil reset AppleEvents Bandonea.FastSwitch    
+tccutil reset AppleEvents Bandonea.FastSwitch   
+
+# Borrar claves específicas que usa la app
+defaults delete Bandonea.FastSwitch FastSwitchUsageHistory 2>/dev/null || true
+defaults delete Bandonea.FastSwitch MateReductionPlan 2>/dev/null || true
+
+3. Limpiar notificaciones pendientes:
+- Ve a System Preferences → Notifications & Focus
+- Busca "FastSwitch" y bórralo de la lista si aparece
+
+4. Resetear permisos de Accessibility y Automation:
+- Ve a System Preferences → Security & Privacy → Privacy
+- En Accessibility: quita FastSwitch si está listado
+- En Automation: quita FastSwitch si está listado
+
+5. Borrar archivos temporales:
+cd /Users/gaston/code/repos/fast-switch
+rm -f phrases.json.backup 2>/dev/null || true
+rm -f *.log 2>/dev/null || true
+
+6. Clean build en Xcode:
+- Product → Clean Build Folder (⇧⌘K)
+
+7. Rebuild y test:
+cd FastSwitch
+xcodebuild -scheme FastSwitch -configuration Debug clean build
+
+Una vez hecho esto, al ejecutar la app por primera vez:
+1. Te va a pedir permisos de notificaciones
+2. Te va a pedir Accessibility
+3. Va a inicializar el plan de mate desde cero (empezando hoy con 5 termos)
+4. Va a cargar las frases motivacionales desde phrases.json
+
 
 ## License
 
 MIT
 
 ---
+
+
+### Reset 
+
+tccutil reset Accessibility com.bandonea.FastSwitch
+tccutil reset AppleEvents   com.bandonea.FastSwitch
