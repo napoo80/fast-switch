@@ -448,9 +448,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // let stickyToggleItem = NSMenuItem(title: "🔄 Modo Sticky Software", action: #selector(toggleStickyMode), keyEquivalent: "")
         // configMenu.addItem(stickyToggleItem)
         
+        
+        injectWallpaperMenu(into: menu)
+
+        
         menu.addItem(configItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Salir", action: #selector(quit), keyEquivalent: "q"))
+        
+        
+        
         statusItem.menu = menu
         
         print("📋 FastSwitch: Menú creado con \(menu.items.count) items")
@@ -4076,3 +4083,78 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 }
 
 
+
+
+// ==============================================================
+// INTEGRACIÓN con tu AppDelegate existente
+// --------------------------------------------------------------
+// 1) Conservá tus structs/phrase system. Este manager puede reutilizar
+//    `motivationalPhrases.map { $0.text }` de tu app.
+// 2) Agregá estas propiedades y acciones al AppDelegate.
+extension AppDelegate {
+    private enum WPTag { static let toggle = 300; static let now = 301; static let i15 = 302; static let i30 = 303; static let i60 = 304 }
+
+    @objc func togglePhraseWallpaper() {
+        if WallpaperPhraseManager.shared.isEnabled {
+            WallpaperPhraseManager.shared.stop()
+        } else {
+            let fallback = ["Concéntrate en el proceso, no en el resultado",
+                            "La consistencia vence al talento",
+                            "Pequeños pasos, grandes logros",
+                            "Cada día es una nueva oportunidad",
+                            "El descanso es parte del trabajo"]
+            let list = motivationalPhrases.isEmpty ? fallback : motivationalPhrases.map { $0.text }
+            WallpaperPhraseManager.shared.start(phrases: list, interval: WallpaperPhraseManager.shared.interval)
+        }
+        updateWallpaperMenuState()
+    }
+
+    @objc func changePhraseNow() { WallpaperPhraseManager.shared.updateNow() }
+    @objc func setWPInterval15() { WallpaperPhraseManager.shared.interval = 15*60; WallpaperPhraseManager.shared.updateNow(); updateWallpaperMenuState() }
+    @objc func setWPInterval30() { WallpaperPhraseManager.shared.interval = 30*60; WallpaperPhraseManager.shared.updateNow(); updateWallpaperMenuState() }
+    @objc func setWPInterval60() { WallpaperPhraseManager.shared.interval = 60*60; WallpaperPhraseManager.shared.updateNow(); updateWallpaperMenuState() }
+
+    func injectWallpaperMenu(into menu: NSMenu) {
+        let wpMenu = NSMenu()
+        let root = NSMenuItem(title: "🖼️ Wallpaper de frases", action: nil, keyEquivalent: "")
+        root.submenu = wpMenu
+
+        let toggle = NSMenuItem(title: "OFF", action: #selector(togglePhraseWallpaper), keyEquivalent: "")
+        toggle.tag = WPTag.toggle; toggle.target = self
+        wpMenu.addItem(toggle)
+
+        let now = NSMenuItem(title: "Cambiar ahora", action: #selector(changePhraseNow), keyEquivalent: "")
+        now.tag = WPTag.now; now.target = self
+        wpMenu.addItem(now)
+
+        wpMenu.addItem(.separator())
+        for (title, sel, tag) in [("Intervalo 15m", #selector(setWPInterval15), WPTag.i15),
+                                  ("Intervalo 30m", #selector(setWPInterval30), WPTag.i30),
+                                  ("Intervalo 60m", #selector(setWPInterval60), WPTag.i60)] {
+            let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            it.tag = tag; it.target = self
+            wpMenu.addItem(it)
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(root)
+        updateWallpaperMenuState()
+    }
+
+    // ÚNICA función de refresco (sin parámetro)
+    func updateWallpaperMenuState() {
+        guard let menu = statusItem.menu,
+              let wpRoot = menu.items.first(where: { $0.submenu?.item(withTag: WPTag.toggle) != nil })?.submenu
+        else { return }
+
+        if let toggle = wpRoot.item(withTag: WPTag.toggle) {
+            let mins = Int(WallpaperPhraseManager.shared.interval / 60)
+            toggle.title = WallpaperPhraseManager.shared.isEnabled ? "ON (\(mins)m)" : "OFF"
+        }
+
+        let current = Int(WallpaperPhraseManager.shared.interval)
+        [(WPTag.i15, 900), (WPTag.i30, 1800), (WPTag.i60, 3600)].forEach { (tag, secs) in
+            wpRoot.item(withTag: tag)?.state = (current == secs) ? .on : .off
+        }
+    }
+}
