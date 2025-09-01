@@ -349,11 +349,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         UInt32(kVK_F6):  "action:paperlike-resolution",               // placeholder
         UInt32(kVK_F7):  "action:paperlike-optimize",          // placeholder
         
-        UInt32(kVK_F8):  "com.spotify.client",
-        UInt32(kVK_F9):  "com.tinyspeck.slackmacgap",
-        UInt32(kVK_F10): "notion.id",
-        UInt32(kVK_F11): "com.apple.TextEdit",
-        UInt32(kVK_F12): "com.apple.Terminal"
+        //UInt32(kVK_F8):  "com.spotify.client",
+        UInt32(kVK_F8):  "com.tinyspeck.slackmacgap",
+        UInt32(kVK_F19): "notion.id",
+        UInt32(kVK_F10): "com.apple.TextEdit",
+        UInt32(kVK_F11): "com.apple.Terminal",
+        UInt32(kVK_F12): "com.mitchellh.ghostty"
+
+
     ]
 
     // MARK: - Lifecycle
@@ -446,6 +449,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         configMenu.addItem(NSMenuItem.separator())
         configMenu.addItem(NSMenuItem(title: "⚙️ Ajustes de Notificaciones…", action: #selector(openNotificationsPrefs), keyEquivalent: ""))
+        
+        
+        //setupDasungMenu()
+
         
         // Optional: uncomment to enable software sticky mode as fallback
         // let stickyToggleItem = NSMenuItem(title: "🔄 Modo Sticky Software", action: #selector(toggleStickyMode), keyEquivalent: "")
@@ -639,7 +646,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             // F2/F3 double → Ctrl+W (Window Switcher for VSCode/Cursor)
             print("⌨️ FastSwitch: Sending Ctrl+W for VSCode/Cursor")
             sendShortcut(letter: "w", control: true)              // Ctrl+W
-        case "com.google.Chrome", "com.apple.finder", "com.apple.Terminal":
+        case "com.google.Chrome", "com.apple.finder", "com.apple.Terminal", "com.mitchellh.ghostty":
             print("⌨️ FastSwitch: Sending ⌘T for \(bundleID)")
             sendShortcut(letter: "t", command: true)               // ⌘T
         case "com.spotify.client":
@@ -3521,6 +3528,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
     
+    
+    
+    
+    
     // MARK: - Configuration Methods
     @objc private func setNotificationIntervalTest() {
         notificationIntervals = [60, 300, 600] // 1min, 5min, 10min para testing
@@ -4108,6 +4119,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             let status = todayMateCount >= target ? "✅" : "🔄"
             mateItem.title = "🧉 Fase \(phase): \(todayMateCount)/\(target) termos \(status)"
         }
+    }
+    
+    
+    
+    
+    // MARK: - DASUNG menú
+    private var dasungItem: NSStatusItem?
+
+    @objc private func actRefresh() { DasungRefresher.shared.refreshPaperlike() }
+
+    @objc private func actM1() { _ = DasungDDC.shared.setDithering(.M1) }
+    @objc private func actM2() { _ = DasungDDC.shared.setDithering(.M2) }
+    @objc private func actM3() { _ = DasungDDC.shared.setDithering(.M3) }
+    @objc private func actM4() { _ = DasungDDC.shared.setDithering(.M4) }
+
+    @objc private func actFastPP() { _ = DasungDDC.shared.setRefresh(.fastPP) }
+    @objc private func actFastP()  { _ = DasungDDC.shared.setRefresh(.fastP) }
+    @objc private func actFast()   { _ = DasungDDC.shared.setRefresh(.fast) }
+    @objc private func actBlackP() { _ = DasungDDC.shared.setRefresh(.blackP) }   // “Tinta+”
+    @objc private func actBlackPP(){ _ = DasungDDC.shared.setRefresh(.blackPP) }  // “Tinta++”
+
+    private func setupDasungMenu() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.title = "🖤"
+        let menu = NSMenu()
+
+        menu.addItem(NSMenuItem(title: "Refrescar DASUNG", action: #selector(actRefresh), keyEquivalent: ""))
+
+        menu.addItem(.separator())
+
+        let dith = NSMenu(title: "Modo (M1–M4)")
+        dith.addItem(NSMenuItem(title: "M1", action: #selector(actM1), keyEquivalent: ""))
+        dith.addItem(NSMenuItem(title: "M2", action: #selector(actM2), keyEquivalent: ""))
+        dith.addItem(NSMenuItem(title: "M3", action: #selector(actM3), keyEquivalent: ""))
+        dith.addItem(NSMenuItem(title: "M4", action: #selector(actM4), keyEquivalent: ""))
+        let dithItem = NSMenuItem(title: "Modo (M1–M4)", action: nil, keyEquivalent: "")
+        dithItem.submenu = dith
+        menu.addItem(dithItem)
+
+        let spd = NSMenu(title: "Velocidad / Tinta")
+        spd.addItem(NSMenuItem(title: "Rápido++", action: #selector(actFastPP), keyEquivalent: ""))
+        spd.addItem(NSMenuItem(title: "Rápido+",  action: #selector(actFastP),  keyEquivalent: ""))
+        spd.addItem(NSMenuItem(title: "Rápido",   action: #selector(actFast),   keyEquivalent: ""))
+        spd.addItem(NSMenuItem(title: "Tinta+",   action: #selector(actBlackP), keyEquivalent: ""))
+        spd.addItem(NSMenuItem(title: "Tinta++",  action: #selector(actBlackPP),keyEquivalent: ""))
+        let spdItem = NSMenuItem(title: "Velocidad / Tinta", action: nil, keyEquivalent: "")
+        spdItem.submenu = spd
+        menu.addItem(spdItem)
+
+        item.menu = menu
+        self.dasungItem = item
     }
     
     

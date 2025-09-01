@@ -14,6 +14,12 @@ FastSwitch is a lightweight macOS menu-bar app that lets you switch to your favo
 * Xcode 14 or later
 * **System Settings → Keyboard →** “Use F1, F2, etc. keys as standard function keys” enabled for bare F-keys.
 
+### Pre installed apps
+
+brew install ddcctl
+brew install displayplacer
+
+
 ## Build Instructions (Development / Debug)
 
 1. **Clone the repo:**

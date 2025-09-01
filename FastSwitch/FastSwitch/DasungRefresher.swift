@@ -2,22 +2,7 @@ import Cocoa
 import Foundation
 import CoreGraphics
 
-// MARK: - NSScreen helpers
-extension NSScreen {
-    /// CGDirectDisplayID del screen a partir del deviceDescription.
-    var cgID: CGDirectDisplayID? {
-        guard let num = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
-        return CGDirectDisplayID(num.uint32Value)
-    }
 
-    /// UUID legible (igual al de `displayplacer list`).
-    var displayUUIDString: String? {
-        guard let id = cgID,
-              let unmanaged = CGDisplayCreateUUIDFromDisplayID(id) else { return nil }
-        let uuid: CFUUID = unmanaged.takeRetainedValue()
-        return CFUUIDCreateString(kCFAllocatorDefault, uuid) as String
-    }
-}
 
 /// Refresher para DASUNG: intenta DDC (m1ddc) → displayplacer → flash negro/blanco.
 final class DasungRefresher {
