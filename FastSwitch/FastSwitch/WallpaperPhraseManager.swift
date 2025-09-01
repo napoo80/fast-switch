@@ -10,6 +10,11 @@ import AppKit
 import Foundation
 import CoreGraphics // arriba si no está
 
+
+
+private let WALLPAPER_KILL_SWITCH = true
+
+
 // MARK: - NSScreen helper
 private extension NSScreen {
     var displayID: CGDirectDisplayID {
@@ -34,6 +39,9 @@ final class WallpaperPhraseManager {
     var phrases: [String] = []
 
     func start(phrases: [String]? = nil, interval: TimeInterval? = nil) {
+        
+        guard !WALLPAPER_KILL_SWITCH else { return }
+
         if let phrases { self.phrases = phrases }
         if let interval { self.interval = interval }
         captureOriginalWallpapersIfNeeded()
@@ -46,7 +54,11 @@ final class WallpaperPhraseManager {
         if restoringOriginal { restoreOriginalWallpapers() }
     }
 
-    func updateNow() { applyPhraseWallpaper() }
+    func updateNow() {
+        guard !WALLPAPER_KILL_SWITCH else { return }
+
+        applyPhraseWallpaper()
+    }
 
     // MARK: - Internals
     private var timer: Timer?

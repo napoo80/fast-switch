@@ -5,6 +5,7 @@ import UserNotifications
 import Foundation
 import UniformTypeIdentifiers
 
+private let DISABLE_WALLPAPER = true
 
 
 // MARK: - Data Structures for Persistent Storage
@@ -345,8 +346,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         
         UInt32(kVK_F5):  "action:dasung-refresh",
-        UInt32(kVK_F6):  "action:paperlike",               // placeholder
-        UInt32(kVK_F7):  "action:paperlike-plus",          // placeholder
+        UInt32(kVK_F6):  "action:paperlike-resolution",               // placeholder
+        UInt32(kVK_F7):  "action:paperlike-optimize",          // placeholder
         
         UInt32(kVK_F8):  "com.spotify.client",
         UInt32(kVK_F9):  "com.tinyspeck.slackmacgap",
@@ -451,8 +452,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // configMenu.addItem(stickyToggleItem)
         
         
-        injectWallpaperMenu(into: menu)
+        //injectWallpaperMenu(into: menu)
 
+        
+        if DISABLE_WALLPAPER {
+            WallpaperPhraseManager.shared.stop()
+
+            //if let wpRoot = statusItem.menu?.item(withTag: MenuTag.wallpaperRoot)?.submenu {
+            //    [WPTag.toggle, WPTag.i15, WPTag.i30, WPTag.i60].forEach { tag in
+            //        if let it = wpRoot.item(withTag: tag) {
+            //            it.isEnabled = false
+            //            it.state = .off
+            //        }
+            //    }
+            //}
+        } else {
+            injectWallpaperMenu(into: menu)
+        }
         
         menu.addItem(configItem)
         menu.addItem(NSMenuItem.separator())
@@ -586,8 +602,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             case "action:insta360-track": toggleInsta360Tracking()
             case "action:dasung-refresh":
                 DasungRefresher.shared.refreshPaperlike()
-            case "action:paperlike": togglePaperlikeMode()
-            case "action:paperlike-plus": toggleGlobalGrayscale()
+            case "action:paperlike-resolution": togglePaperlikeResolutionToggle()
+            case "action:paperlike-optimize": toggleGlobalGrayscale()
             default: break
             }
             return
@@ -2006,10 +2022,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     
     // E-ink nítido (HiDPI). Probá 60 Hz primero; si notás glitches, cambiá a 40 Hz.
-    private let paperlikePreset = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:1100X825 hz:40 color_depth:8 scaling:on origin:(1512,0) degree:0"#  
+    private let ochocientosPorSeiscientos = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:800x600 hz:40 color_depth:8 scaling:on origin:(-800,0) degree:0"#
 
     // Volver a tu modo actual del DASUNG
-    private let desktopPreset   = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:800x600 hz:40 color_depth:8 scaling:on origin:(1512,0) degree:0"#
+    private let novecientosPorSieteVeinte   = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:960x720 hz:40 color_depth:8 scaling:on origin:(960,0) degree:0"#
+
+    
+    //displayplacer "id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:800x600  hz:40  color_depth:8 scaling:on origin:(-800,0)  degree:0"
+    
+    //displayplacer "id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:960x720 hz:40 color_depth:8 scaling:on origin:(-960,0) degree:0"
+
+
+    //displayplacer "id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:1100x826 hz:40 color_depth:8 scaling:on origin:(-1100,0) degree:0"
+    
+
+    //displayplacer "id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:1024x768 hz:40 color_depth:8 scaling:on origin:(-1024,0) degree:0"
+
 
     
     // Añade estas props (cerca de tus otras config vars)
@@ -2019,19 +2047,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     
 
-    private func togglePaperlikeMode() {
+    private func togglePaperlikeResolutionToggle() {
         paperlikeEnabled.toggle()
         let dp = "/opt/homebrew/bin/displayplacer"  // o /usr/local/bin si fuera Intel
-        _ = sh(dp, [paperlikeEnabled ? paperlikePreset : desktopPreset])
+        _ = sh(dp, [paperlikeEnabled ? ochocientosPorSeiscientos : novecientosPorSieteVeinte])
         
         //if paperlikeEnabled {
         //    // Perfil de color en gris SOLO para el DASUNG
         //    _ = run(dprof, ["apply", paperlikeICCName])
         //}
         
-        if paperlikeEnabled {
-            applyGrayICCtoDasung(iccName: "Generic Gray Gamma 2.2")
-        }
+        //if paperlikeEnabled {
+        //    applyGrayICCtoDasung(iccName: "Generic Gray Gamma 2.2")
+        //}
         print("🖥️ Paperlike \(paperlikeEnabled ? "ON" : "OFF")")
     }
     
