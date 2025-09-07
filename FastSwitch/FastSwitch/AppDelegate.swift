@@ -29,7 +29,7 @@ private func hotKeyHandler(_ nextHandler: EventHandlerCallRef?,
     return noErr
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate {
     private var statusItem: NSStatusItem!
     private var eventHandlerRef: EventHandlerRef?
     private var hotKeys: [EventHotKeyRef?] = []
@@ -172,12 +172,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
-
-        
-        // Request notification permissions and set delegate
-        requestNotificationPermissions()
-        UNUserNotificationCenter.current().delegate = self
+        // Setup notification manager
+        NotificationManager.shared.delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -1193,21 +1189,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private func showMateTargetReachedNotification() {
         let target = mateReductionPlan.getCurrentTargetThermos()
         
-        let content = UNMutableNotificationContent()
-        content.title = "🎯 Objetivo de Mate Alcanzado"
-        content.body = "Ya tomaste \(target) termos hoy. ¡Perfecto! Mantenete así hasta mañana."
-        content.sound = UNNotificationSound.default
-        
-        // Add motivational phrase
-        self.addPhraseToNotification(content, context: "mate_target_reached")
-        
-        let request = UNNotificationRequest(
-            identifier: "mate-target-reached-\(Int(Date().timeIntervalSince1970))",
-            content: content,
-            trigger: nil
+        // Use NotificationManager for success notification
+        NotificationManager.shared.scheduleSuccessNotification(
+            title: "🎯 Objetivo de Mate Alcanzado",
+            message: "Ya tomaste \(target) termos hoy. ¡Perfecto! Mantenete así hasta mañana."
         )
-        
-        UNUserNotificationCenter.current().add(request)
     }
     
     private func showPhaseAdvancementNotification() {
@@ -2120,20 +2106,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
     
     // MARK: - Usage Tracking
-    private func requestNotificationPermissions() {
-        print("🔔 FastSwitch: Solicitando permisos de notificación...")
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    print("❌ FastSwitch: Error en permisos de notificación: \(error)")
-                } else if granted {
-                    print("✅ FastSwitch: Permisos de notificación concedidos")
-                } else {
-                    print("⚠️ FastSwitch: Permisos de notificación denegados")
-                }
-            }
-        }
-    }
     
     private func startUsageTracking() {
         sessionStartTime = Date()
@@ -3279,37 +3251,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                     try data.write(to: url)
                     
                     // Show success notification
-                    let content = UNMutableNotificationContent()
-                    content.title = "💾 Export Complete"
-                    content.body = "Usage data exported successfully to:\n\(url.path)\n\n📊 \(self.usageHistory.dailyData.count) days of data exported."
-                    content.sound = UNNotificationSound(named: UNNotificationSoundName("Glass.aiff"))
-                    content.interruptionLevel = .active
-                    
-                    let request = UNNotificationRequest(
-                        identifier: "export-success-\(Int(Date().timeIntervalSince1970))",
-                        content: content,
-                        trigger: nil
+                    NotificationManager.shared.scheduleSuccessNotification(
+                        title: "💾 Export Complete",
+                        message: "Usage data exported successfully to:\n\(url.path)\n\n📊 \(self.usageHistory.dailyData.count) days of data exported."
                     )
-                    
-                    UNUserNotificationCenter.current().add(request)
                     print("✅ FastSwitch: Datos exportados a: \(url.path)")
                 } catch {
                     print("❌ FastSwitch: Error exportando datos: \(error)")
                     
                     // Show error notification
-                    let content = UNMutableNotificationContent()
-                    content.title = "❌ Export Failed"
-                    content.body = "Failed to export usage data:\n\(error.localizedDescription)"
-                    content.sound = UNNotificationSound(named: UNNotificationSoundName("Basso.aiff"))
-                    content.interruptionLevel = .active
-                    
-                    let request = UNNotificationRequest(
-                        identifier: "export-error-\(Int(Date().timeIntervalSince1970))",
-                        content: content,
-                        trigger: nil
+                    NotificationManager.shared.scheduleErrorNotification(
+                        title: "❌ Export Failed",
+                        message: "Failed to export usage data:\n\(error.localizedDescription)"
                     )
-                    
-                    UNUserNotificationCenter.current().add(request)
                 }
             }
         }
@@ -3409,13 +3363,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         print("🔕 DEBUG: NOTIFICACIONES DESHABILITADAS - No habrá recordatorios")
     }
     
-    // MARK: - UNUserNotificationCenterDelegate
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    // MARK: - NotificationManagerDelegate
+    func notificationManager(_ manager: NotificationManager, shouldPresentNotification notification: UNNotification) -> UNNotificationPresentationOptions {
         // Show notification even when app is active
-        completionHandler([.banner, .sound, .badge])
+        return [.banner, .sound, .badge]
     }
     
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+    func notificationManager(_ manager: NotificationManager, didReceiveAction actionId: String, with response: UNNotificationResponse) {
         switch response.actionIdentifier {
         case "DISMISS_ACTION":
             print("✅ FastSwitch: Usuario confirmó notificación de descanso")
@@ -3711,8 +3665,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         default:
             break
         }
-        
-        completionHandler()
     }
     
     // MARK: - Daily Reflection and Journal Functions
