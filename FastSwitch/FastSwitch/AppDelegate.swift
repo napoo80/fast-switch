@@ -239,12 +239,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     // MARK: - Meet (Chrome)
     private func toggleMeetMic() {
         let chrome = "com.google.Chrome"
-        print("🎤 FastSwitch: F5 presionado - Toggle mic Meet")
+        print("🎤 FastSwitch: F5 pressed - Toggle Meet mic")
         
         // Automatically set call status when using Meet controls
         if chromeFrontTabIsMeet() {
             manualCallToggle = true
-            print("🎤 FastSwitch: Meet detectado, activando estado de llamada")
+            print("🎤 FastSwitch: Meet detected, enabling call status")
         }
         
         AppSwitchingManager.shared.activateApp(bundleID: chrome) { [weak self] in
@@ -252,18 +252,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             if self.chromeFrontTabIsMeet() { 
                 self.sendShortcut(letter: "d", command: true) // ⌘D
                 self.manualCallToggle = true // Ensure call status is set
-                print("🎤 FastSwitch: Enviado ⌘D para toggle mic")
+                print("🎤 FastSwitch: Sent ⌘D to toggle mic")
             }
         }
     }
     private func toggleMeetCam() {
         let chrome = "com.google.Chrome"
-        print("📹 FastSwitch: F6 presionado - Toggle cam Meet")
+        print("📹 FastSwitch: F6 pressed - Toggle Meet camera")
         
         // Automatically set call status when using Meet controls
         if chromeFrontTabIsMeet() {
             manualCallToggle = true
-            print("📹 FastSwitch: Meet detectado, activando estado de llamada")
+            print("📹 FastSwitch: Meet detected, enabling call status")
         }
         
         AppSwitchingManager.shared.activateApp(bundleID: chrome) { [weak self] in
@@ -271,7 +271,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             if self.chromeFrontTabIsMeet() { 
                 self.sendShortcut(letter: "e", command: true) // ⌘E
                 self.manualCallToggle = true // Ensure call status is set
-                print("📹 FastSwitch: Enviado ⌘E para toggle cam")
+                print("📹 FastSwitch: Sent ⌘E to toggle camera")
             }
         }
     }
@@ -292,7 +292,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     // MARK: - Deep Focus (F7)
     private func toggleDeepFocus() {
         isDeepFocusEnabled.toggle()
-        print("🧘 FastSwitch: F7 presionado - Toggle Deep Focus: \(isDeepFocusEnabled ? "ON" : "OFF")")
+        print("🧘 FastSwitch: F7 pressed - Toggle Deep Focus: \(isDeepFocusEnabled ? "ON" : "OFF")")
         
         if isDeepFocusEnabled {
             enableDeepFocus()
@@ -306,7 +306,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     private func enableDeepFocus() {
-        print("🧘 FastSwitch: Activando Deep Focus...")
+        print("🧘 FastSwitch: Activating Deep Focus...")
         
         // Enable Do Not Disturb on macOS
         let enableDNDScript = #"""
@@ -333,11 +333,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             self?.showDeepFocusCompletionNotification()
         }
         
-        print("✅ FastSwitch: Deep Focus activado - DND macOS + Slack, timer 60min iniciado")
+        print("✅ FastSwitch: Deep Focus enabled - macOS + Slack DND, 60min timer started")
     }
     
     private func disableDeepFocus() {
-        print("🧘 FastSwitch: Desactivando Deep Focus...")
+        print("🧘 FastSwitch: Deactivating Deep Focus...")
         
         // Cancel timer if running
         deepFocusTimer?.invalidate()
@@ -376,7 +376,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
             }
             
-            print("✅ FastSwitch: Deep Focus desactivado - DND off macOS + Slack (duración: \(minutes)min)")
+            print("✅ FastSwitch: Deep Focus disabled - macOS + Slack DND off (duration: \(minutes)min)")
             deepFocusSessionStartTime = nil
         }
         
@@ -389,7 +389,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     private func enableSlackDND() {
-        print("🧘 FastSwitch: Activando DND en Slack...")
+        print("🧘 FastSwitch: Activating Slack DND...")
         
         // Set Slack status to DND for 60 minutes
         let slackDNDScript = #"""
@@ -409,11 +409,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         """#
         
         runAppleScript(slackDNDScript)
-        print("✅ FastSwitch: Comando DND enviado a Slack")
+        print("✅ FastSwitch: DND command sent to Slack")
     }
     
     private func disableSlackDND() {
-        print("🧘 FastSwitch: Desactivando DND en Slack...")
+        print("🧘 FastSwitch: Deactivating Slack DND...")
         
         // Clear Slack DND
         let slackClearDNDScript = #"""
@@ -432,11 +432,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         """#
         
         runAppleScript(slackClearDNDScript)
-        print("✅ FastSwitch: DND de Slack desactivado")
+        print("✅ FastSwitch: Slack DND disabled")
     }
     
     private func showDeepFocusCompletionNotification() {
-        print("🧘 FastSwitch: Sesión Deep Focus de 60min completada")
+        print("🧘 FastSwitch: 60min Deep Focus session completed")
         
         // Start sticky notification tracking
         deepFocusNotificationStartTime = Date()
@@ -708,7 +708,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             if let error = error {
                 print("❌ FastSwitch: Error enviando pregunta de mate: \(error)")
             } else {
-                print("🧉 FastSwitch: Pregunta de mate enviada")
+                print("🧉 FastSwitch: Mate question sent")
             }
         }
     }
@@ -1473,12 +1473,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     
     
     // E-ink nítido (HiDPI). Probá 60 Hz primero; si notás glitches, cambiá a 40 Hz.
-    private var ochocientosPorSeiscientos: String {
+    private var eightHundredBySixHundred: String {
         return #"id:\#(DasungRefresher.shared.dasungDisplayUUID) res:800x600 hz:40 color_depth:8 scaling:on origin:(-800,0) degree:0"#
     }
 
-    // Volver a tu modo actual del DASUNG
-    private var novecientosPorSieteVeinte: String {
+    // Return to your current DASUNG mode
+    private var nineHundredBySixHundredTwenty: String {
         return #"id:\#(DasungRefresher.shared.dasungDisplayUUID) res:960x720 hz:40 color_depth:8 scaling:on origin:(960,0) degree:0"#
     }
 
@@ -1504,8 +1504,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
 
     private func togglePaperlikeResolutionToggle() {
         paperlikeEnabled.toggle()
-        let dp = "/opt/homebrew/bin/displayplacer"  // o /usr/local/bin si fuera Intel
-        _ = sh(dp, [paperlikeEnabled ? ochocientosPorSeiscientos : novecientosPorSieteVeinte])
+        let dp = "/opt/homebrew/bin/displayplacer"  // or /usr/local/bin for Intel
+        _ = sh(dp, [paperlikeEnabled ? eightHundredBySixHundred : nineHundredBySixHundredTwenty])
         
         //if paperlikeEnabled {
         //    // Perfil de color en gris SOLO para el DASUNG
@@ -3450,7 +3450,7 @@ extension AppDelegate {
     @objc func setWPInterval60() { WallpaperPhraseManager.shared.interval = 60*60; WallpaperPhraseManager.shared.updateNow(); updateWallpaperMenuState() }
 
 
-    // ÚNICA función de refresco (sin parámetro)
+    // Single refresh function (no parameter)
     func updateWallpaperMenuState() {
         // Wallpaper menu state now handled by MenuBarManager
         let intervalMinutes = Int(WallpaperPhraseManager.shared.interval / 60)
