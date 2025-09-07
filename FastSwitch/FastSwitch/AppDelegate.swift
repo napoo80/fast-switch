@@ -10,7 +10,7 @@ private let DISABLE_WALLPAPER = true
 
 
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate {
     private var statusItem: NSStatusItem!
     // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
@@ -68,7 +68,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     
     // Persistent storage
     private var usageHistory: UsageHistory = UsageHistory()
-    private let usageHistoryKey = "FastSwitchUsageHistory"
     private var currentDayCallTime: TimeInterval = 0
     private var callStartTime: Date?
     private var deepFocusSessionStartTime: Date?
@@ -127,6 +126,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         NotificationManager.shared.delegate = self
         HotkeyManager.shared.delegate = self
         AppSwitchingManager.shared.delegate = self
+        PersistenceManager.shared.delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -249,7 +249,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         currentContinuousSessionStart = Date()
         
         // Load usage history
-        loadUsageHistory()
+        usageHistory = PersistenceManager.shared.loadUsageHistory()
         
         // Initialize today's data if needed
         initializeTodayData()
@@ -294,7 +294,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     func applicationWillTerminate(_ notification: Notification) { 
         // Save today's data before terminating
         saveTodayData()
-        saveUsageHistory()
+        if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
         
         HotkeyManager.shared.unregisterHotkeys()
         stopUsageTracking()
@@ -511,7 +513,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             if var todayData = usageHistory.dailyData[todayKey] {
                 todayData.deepFocusSessions.append(SessionRecord(start: startTime, duration: sessionDuration))
                 usageHistory.dailyData[todayKey] = todayData
-                saveUsageHistory()
+                if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
             }
             
             print("✅ FastSwitch: Deep Focus desactivado - DND off macOS + Slack (duración: \(minutes)min)")
@@ -859,7 +863,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             todayData.workdayStart = Date()
             usageHistory.dailyData[todayKey] = todayData
             hasRecordedWorkdayStart = true
-            saveUsageHistory()
+            if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
             print("🌅 FastSwitch: Inicio de jornada registrado")
         }
     }
@@ -1030,7 +1036,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             let mateRecord = MateRecord(time: Date(), thermosCount: thermosCount, type: "mate")
             todayData.wellnessMetrics.mateRecords.append(mateRecord)
             usageHistory.dailyData[todayKey] = todayData
-            saveUsageHistory()
+            if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
             
             todayMateCount += thermosCount
             updateMateReductionProgress()
@@ -1195,18 +1203,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     private func loadMateReductionPlan() {
-        if let data = UserDefaults.standard.data(forKey: "MateReductionPlan") {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            if let plan = try? decoder.decode(MateReductionPlan.self, from: data) {
-                mateReductionPlan = plan
-                print("✅ FastSwitch: Plan de reducción de mate cargado - Fase \(plan.currentPhase)")
-            } else {
-                // Initialize new plan
-                mateReductionPlan = MateReductionPlan()
-                saveMateReductionPlan()
-                print("🆕 FastSwitch: Nuevo plan de reducción de mate iniciado")
-            }
+        if let plan = PersistenceManager.shared.loadMateReductionPlan() {
+            mateReductionPlan = plan
+            print("✅ FastSwitch: Plan de reducción de mate cargado - Fase \(plan.currentPhase)")
         } else {
             // Initialize new plan
             mateReductionPlan = MateReductionPlan()
@@ -1227,7 +1226,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             )
             todayData.wellnessMetrics.exerciseRecords.append(exerciseRecord)
             usageHistory.dailyData[todayKey] = todayData
-            saveUsageHistory()
+            if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
             
             print("🏃 FastSwitch: Ejercicio registrado - Hecho: \(done), Duración: \(duration)min, Tipo: \(type)")
         }
@@ -1251,7 +1252,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             }
             
             usageHistory.dailyData[todayKey] = todayData
-            saveUsageHistory()
+            if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
             
             print("🌱 FastSwitch: Check de bienestar registrado - Tipo: \(type), Nivel: \(level), Contexto: \(context)")
         }
@@ -1272,7 +1275,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             todayData.wellnessMetrics.moodChecks.append(wellnessCheck)
             
             usageHistory.dailyData[todayKey] = todayData
-            saveUsageHistory()
+            if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
             
             let status = completed ? "completada" : "salteada"
             print("🎯 FastSwitch: Acción de bienestar \(action) \(status)")
@@ -1883,34 +1888,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     @objc private func quit() { NSApp.terminate(nil) }
     
     // MARK: - Persistent Storage
-    private func loadUsageHistory() {
-        if let data = UserDefaults.standard.data(forKey: usageHistoryKey) {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            if let history = try? decoder.decode(UsageHistory.self, from: data) {
-                usageHistory = history
-                print("📂 FastSwitch: Historial de uso cargado - \(history.dailyData.count) días")
-            } else {
-                usageHistory = UsageHistory()
-                print("📂 FastSwitch: Iniciando nuevo historial de uso")
-            }
-        } else {
-            usageHistory = UsageHistory()
-            print("📂 FastSwitch: Iniciando nuevo historial de uso")
-        }
-    }
-    
-    private func saveUsageHistory() {
-        do {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(usageHistory)
-            UserDefaults.standard.set(data, forKey: usageHistoryKey)
-            print("💾 FastSwitch: Historial guardado - \(usageHistory.dailyData.count) días")
-        } catch {
-            print("❌ FastSwitch: Error guardando historial: \(error)")
-        }
-    }
     
     private func getTodayKey() -> String {
         let formatter = DateFormatter()
@@ -1958,7 +1935,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
         
         usageHistory.dailyData[todayKey] = todayData
-        saveUsageHistory()
+        if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
         
         print("💾 FastSwitch: Datos de hoy guardados")
     }
@@ -3074,40 +3053,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     
     @objc private func exportUsageData() {
         print("💾 FastSwitch: Exportando datos de uso")
-        saveTodayData() // Ensure current data is saved
+        // Save current day data
+        if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
         
-        let savePanel = NSSavePanel()
-        savePanel.title = "Export Usage Data"
-        savePanel.nameFieldStringValue = "FastSwitch-Usage-Data-\(getTodayKey()).json"
-        savePanel.allowedContentTypes = [.json]
-        savePanel.canCreateDirectories = true
-        
-        savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                do {
-                    // Set proper date encoding for analyzer compatibility
-                    let encoder = JSONEncoder()
-                    encoder.dateEncodingStrategy = .iso8601
-                    
-                    let data = try encoder.encode(self.usageHistory)
-                    try data.write(to: url)
-                    
-                    // Show success notification
-                    NotificationManager.shared.scheduleSuccessNotification(
-                        title: "💾 Export Complete",
-                        message: "Usage data exported successfully to:\n\(url.path)\n\n📊 \(self.usageHistory.dailyData.count) days of data exported."
-                    )
-                    print("✅ FastSwitch: Datos exportados a: \(url.path)")
-                } catch {
-                    print("❌ FastSwitch: Error exportando datos: \(error)")
-                    
-                    // Show error notification
-                    NotificationManager.shared.scheduleErrorNotification(
-                        title: "❌ Export Failed",
-                        message: "Failed to export usage data:\n\(error.localizedDescription)"
-                    )
-                }
-            }
+        if let exportURL = PersistenceManager.shared.exportUsageData() {
+            // Show success notification
+            NotificationManager.shared.scheduleSuccessNotification(
+                title: "💾 Export Complete",
+                message: "Usage data exported to Desktop:\n\(exportURL.lastPathComponent)\n\n📊 \(self.usageHistory.dailyData.count) days of data exported."
+            )
+            print("✅ FastSwitch: Datos exportados a: \(exportURL.path)")
+        } else {
+            // Show error notification
+            NotificationManager.shared.scheduleErrorNotification(
+                title: "❌ Export Failed",
+                message: "Failed to export usage data to Desktop"
+            )
         }
     }
     
@@ -3525,7 +3488,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         // Save reflection
         todayData.dailyReflection = reflection
         usageHistory.dailyData[dateKey] = todayData
-        saveUsageHistory()
+        if let todayData = usageHistory.dailyData[getTodayKey()] {
+            PersistenceManager.shared.saveDailyData(todayData)
+        }
         
         print("✅ FastSwitch: Reflexión diaria guardada - Mood: \(mood)")
         
@@ -3872,5 +3837,24 @@ extension AppDelegate {
         [(WPTag.i15, 900), (WPTag.i30, 1800), (WPTag.i60, 3600)].forEach { (tag, secs) in
             wpRoot.item(withTag: tag)?.state = (current == secs) ? .on : .off
         }
+    }
+}
+
+// MARK: - PersistenceManagerDelegate
+
+extension AppDelegate: PersistenceManagerDelegate {
+    func persistenceManager(_ manager: PersistenceManager, didLoadUsageHistory history: UsageHistory) {
+        usageHistory = history
+        print("📂 FastSwitch: Usage history loaded via PersistenceManager")
+    }
+    
+    func persistenceManager(_ manager: PersistenceManager, didFailWithError error: Error) {
+        print("❌ FastSwitch: PersistenceManager error: \(error.localizedDescription)")
+        
+        // Show error notification
+        NotificationManager.shared.scheduleErrorNotification(
+            title: "💾 Data Error",
+            message: "Failed to save/load data: \(error.localizedDescription)"
+        )
     }
 }
