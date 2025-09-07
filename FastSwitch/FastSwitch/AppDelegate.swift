@@ -10,7 +10,7 @@ private let DISABLE_WALLPAPER = true
 
 
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate, BreakReminderManagerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate, BreakReminderManagerDelegate, WellnessManagerDelegate {
     private var statusItem: NSStatusItem!
     // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
@@ -57,24 +57,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     // Break timer system (now handled by BreakReminderManager)
     private var customFocusDuration: TimeInterval = 3600 // Default 60 minutes
     
-    // Wellness tracking
-    private var wellnessQuestionTimer: Timer?
-    private var lastMateQuestion: Date?
-    private var lastExerciseQuestion: Date?
-    private var lastEnergyCheck: Date?
-    private var hasRecordedWorkdayStart: Bool = false
-    private var wellnessQuestionsEnabled: Bool = true
+    // Wellness tracking (now handled by WellnessManager)
     
     // Motivational phrases system
     private var motivationalPhrases: [MotivationalPhrase] = []
     private var recentPhrases: [String] = [] // Track recently shown phrases to avoid repetition
     private let maxRecentPhrases = 5
     
-    // Mate reduction plan system
-    private var mateReductionPlan = MateReductionPlan()
-    private var mateScheduleTimer: Timer?
-    private var todayMateCount: Int = 0
-    private var mateNotificationHistory: [Date] = []
+    // Mate reduction plan system (now handled by WellnessManager)
 
     // F-keys → apps/acciones
 
@@ -108,6 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         PersistenceManager.shared.delegate = self
         UsageTrackingManager.shared.delegate = self
         BreakReminderManager.shared.delegate = self
+        WellnessManager.shared.delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -231,25 +222,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         // Schedule daily dashboard
         scheduleDailyDashboard()
         
-        // Initialize wellness tracking
-        scheduleWellnessQuestions()
+        // Initialize wellness tracking (opt-in, disabled by default)
+        // WellnessManager.shared.setWellnessEnabled(true) // Uncomment to enable
         
         // Load motivational phrases
         loadMotivationalPhrases()
         
-        // Load mate reduction plan and schedule reminders
-        loadMateReductionPlan()
-        scheduleMateReminders()
+        // Wellness features now managed by WellnessManager
         
         // Auto-enable testing mode for now
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.setNotificationIntervalTest()
         }
         
-        // Start wellness reminders for healthy habits
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-            self.scheduleWellnessReminders()
-        }
+        // Wellness reminders now handled by WellnessManager
         
         #if DEBUG
         // Quick wellness testing - trigger all wellness questions for testing
@@ -278,8 +264,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         deepFocusNotificationTimer?.invalidate()
         BreakReminderManager.shared.stopStickyBreakReminders()
         dashboardTimer?.invalidate()
-        BreakReminderManager.shared.BreakReminderManager.shared.stopBreakTimer()
-        wellnessQuestionTimer?.invalidate()
+        BreakReminderManager.shared.stopBreakTimer()
+        // Wellness timers now handled by WellnessManager
     }
 
 
@@ -917,7 +903,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     // MARK: - Wellness Data Recording
-    private func recordMateIntake(thermosCount: Int) {
+    private func WellnessManager.shared.recordMate(thermosCount: Int) {
         let todayKey = getTodayKey()
         if var todayData = usageHistory.dailyData[todayKey] {
             let mateRecord = MateRecord(time: Date(), thermosCount: thermosCount, type: "mate")
@@ -1121,7 +1107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
     }
     
-    private func recordWellnessCheck(type: String, level: Int, context: String) {
+    private func WellnessManager.shared.recordWellnessCheck(type: String, level: Int, context: String) {
         let todayKey = getTodayKey()
         if var todayData = usageHistory.dailyData[todayKey] {
             let wellnessCheck = WellnessCheck(time: Date(), type: type, level: level, context: context)
@@ -1841,7 +1827,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         
         // Check for end of workday for daily reflection
         if detectEndOfWorkday() {
-            askDailyReflection()
+            WellnessManager.shared.askDailyReflection()
         }
         
         let effectiveIdleThreshold = isInCall ? callIdleThreshold : idleThreshold
@@ -2572,7 +2558,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     
-    private func askDailyReflection() {
+    private func WellnessManager.shared.askDailyReflection() {
         print("📝 FastSwitch: Pregunta de reflexión diaria")
         
         let content = UNMutableNotificationContent()
@@ -3158,54 +3144,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             
         case "MOOD_PRODUCTIVE":
             print("💪 FastSwitch: Usuario se sintió productivo")
-            saveDailyReflection(mood: "productive", notes: "Día productivo")
+            _ = WellnessManager.shared.saveDailyReflection(mood: "productive", notes: "Día productivo")
             NSApp.dockTile.badgeLabel = nil
             
         case "MOOD_BALANCED":
             print("⚖️ FastSwitch: Usuario se sintió equilibrado")
-            saveDailyReflection(mood: "balanced", notes: "Día equilibrado")
+            _ = WellnessManager.shared.saveDailyReflection(mood: "balanced", notes: "Día equilibrado")
             NSApp.dockTile.badgeLabel = nil
             
         case "MOOD_TIRED":
             print("😴 FastSwitch: Usuario se sintió cansado")
-            saveDailyReflection(mood: "tired", notes: "Día cansado")
+            _ = WellnessManager.shared.saveDailyReflection(mood: "tired", notes: "Día cansado")
             NSApp.dockTile.badgeLabel = nil
             
         case "MOOD_STRESSED":
             print("😤 FastSwitch: Usuario se sintió estresado")
-            saveDailyReflection(mood: "stressed", notes: "Día estresado")
+            _ = WellnessManager.shared.saveDailyReflection(mood: "stressed", notes: "Día estresado")
             NSApp.dockTile.badgeLabel = nil
             
         case "START_REFLECTION_ACTION":
             print("📝 FastSwitch: Usuario inició reflexión desde dashboard")
-            askDailyReflection()
+            WellnessManager.shared.askDailyReflection()
             NSApp.dockTile.badgeLabel = nil
             
         // Wellness Question Actions - Mate and Sugar
         case "MATE_NONE":
             print("🧉 FastSwitch: Usuario reportó 0 termos")
-            self.recordMateIntake(thermosCount: 0)
+            self.WellnessManager.shared.recordMate(thermosCount: 0)
             NSApp.dockTile.badgeLabel = nil
             
         case "MATE_LOW":
             print("🧉 FastSwitch: Usuario reportó 1 termo")
-            self.recordMateIntake(thermosCount: 1)
+            self.WellnessManager.shared.recordMate(thermosCount: 1)
             NSApp.dockTile.badgeLabel = nil
             
         case "MATE_MEDIUM":
             print("🧉 FastSwitch: Usuario reportó 2 termos")
-            self.recordMateIntake(thermosCount: 2)
+            self.WellnessManager.shared.recordMate(thermosCount: 2)
             NSApp.dockTile.badgeLabel = nil
             
         case "MATE_HIGH":
             print("🧉 FastSwitch: Usuario reportó 3+ termos")
-            self.recordMateIntake(thermosCount: 3)
+            self.WellnessManager.shared.recordMate(thermosCount: 3)
             NSApp.dockTile.badgeLabel = nil
             
         // New Mate Reminder Actions
         case "RECORD_MATE_ACTION":
             print("✅ FastSwitch: Usuario registró mate desde recordatorio")
-            self.recordMateIntake(thermosCount: 1)
+            self.WellnessManager.shared.recordMate(thermosCount: 1)
             NSApp.dockTile.badgeLabel = nil
             
         case "SKIP_MATE_ACTION":
@@ -3236,17 +3222,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         // Wellness Question Actions - Energy
         case "ENERGY_LOW":
             print("⚡ FastSwitch: Usuario reportó energía baja")
-            self.recordWellnessCheck(type: "energy", level: 2, context: "work_session")
+            self.WellnessManager.shared.recordWellnessCheck(type: "energy", level: 2, context: "work_session")
             NSApp.dockTile.badgeLabel = nil
             
         case "ENERGY_MEDIUM":
             print("⚡ FastSwitch: Usuario reportó energía media")
-            self.recordWellnessCheck(type: "energy", level: 5, context: "work_session")
+            self.WellnessManager.shared.recordWellnessCheck(type: "energy", level: 5, context: "work_session")
             NSApp.dockTile.badgeLabel = nil
             
         case "ENERGY_HIGH":
             print("⚡ FastSwitch: Usuario reportó energía alta")
-            self.recordWellnessCheck(type: "energy", level: 8, context: "work_session")
+            self.WellnessManager.shared.recordWellnessCheck(type: "energy", level: 8, context: "work_session")
             NSApp.dockTile.badgeLabel = nil
             
         // New Wellness Actions
@@ -3308,7 +3294,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     // MARK: - Daily Reflection and Journal Functions
-    private func saveDailyReflection(mood: String, notes: String) {
+    private func _ = WellnessManager.shared.saveDailyReflection(mood: String, notes: String) {
         let dateKey = getTodayKey()
         
         // Get or create today's data
@@ -3371,7 +3357,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             if journalText != "CANCELLED" && !journalText.isEmpty {
                 // Save the journal entry with mood detection
                 let mood = detectMoodFromText(journalText)
-                saveDailyReflection(mood: mood, notes: journalText)
+                _ = WellnessManager.shared.saveDailyReflection(mood: mood, notes: journalText)
             } else {
                 print("📝 FastSwitch: Usuario canceló o no escribió nada")
             }
@@ -3757,5 +3743,42 @@ extension AppDelegate: BreakReminderManagerDelegate {
                 print("✅ FastSwitch: Break notification sent successfully")
             }
         }
+    }
+}
+
+// MARK: - WellnessManagerDelegate
+
+extension AppDelegate: WellnessManagerDelegate {
+    func wellnessManager(_ manager: WellnessManager, needsNotification request: UNNotificationRequest) {
+        // Send wellness notification via system
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error sending wellness notification: \(error)")
+            } else {
+                print("✅ FastSwitch: Wellness notification sent successfully")
+            }
+        }
+    }
+    
+    func wellnessManager(_ manager: WellnessManager, didUpdateMateProgress thermos: Int, target: Int) {
+        // Update mate progress in menu (method will be extracted to MenuBarManager)
+        print("🧉 FastSwitch: Mate progress updated: \(thermos)/\(target)")
+    }
+    
+    func wellnessManager(_ manager: WellnessManager, didAdvancePhase newPhase: Int) {
+        // Update UI for phase advancement
+        print("📈 FastSwitch: Mate reduction advanced to phase \(newPhase)")
+    }
+    
+    func wellnessManager(_ manager: WellnessManager, didSaveDailyReflection reflection: DailyReflection) {
+        // Save reflection to today's data
+        let todayKey = getTodayKey()
+        guard var todayData = usageHistory.dailyData[todayKey] else { return }
+        
+        todayData.dailyReflection = reflection
+        usageHistory.dailyData[todayKey] = todayData
+        PersistenceManager.shared.saveDailyData(todayData)
+        
+        print("📝 FastSwitch: Daily reflection saved via WellnessManager")
     }
 }
