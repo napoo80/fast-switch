@@ -10,7 +10,7 @@ private let DISABLE_WALLPAPER = true
 
 
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate, BreakReminderManagerDelegate {
     private var statusItem: NSStatusItem!
     // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
@@ -29,13 +29,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     private var deepFocusNotificationStartTime: Date?
     private var sentNotificationIntervals: Set<TimeInterval> = []
     
-    // Break sticky notifications
-    private var stickyBreakStartTime: Date?
-    private var stickyBreakTimer: Timer?
-    private let stickyRepeatInterval: TimeInterval = 15      // reintentar cada 15s
-    private let stickyMaxDuration: TimeInterval = 60 * 60    // tope 60 min
-    private let stickyBreakNotificationID = "break-sticky"   // ID fijo para poder reemplazar/limpiar
-    private var stickyRemindersEnabled: Bool = false  // Disabled since native Alerts work better
+    // Break sticky notifications (now handled by BreakReminderManager)
     
     // Deep Focus: guardá el último ID para poder limpiarlo (bugfix)
     private var lastDeepFocusNotificationID: String?
@@ -44,11 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     private var dashboardTimer: Timer?
     private var hasShownDashboardToday: Bool = false
     
-    // Break and continuous session tracking
-    private var breaksTaken: [SessionRecord] = []
-    private var isCurrentlyOnBreak: Bool = false
-    private var breakStartTime: Date?
-    private var totalBreakTime: TimeInterval = 0
+    // Break tracking (now handled by BreakReminderManager)
     
     // Configuration
     private let idleThreshold: TimeInterval = 300 // 5 minutes
@@ -64,10 +54,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     private var usageHistory: UsageHistory = UsageHistory()
     private var deepFocusSessionStartTime: Date?
     
-    // Break timer system
-    private var breakTimer: Timer?
-    private var breakTimerStartTime: Date?
-    private var isBreakTimerActive: Bool = false
+    // Break timer system (now handled by BreakReminderManager)
     private var customFocusDuration: TimeInterval = 3600 // Default 60 minutes
     
     // Wellness tracking
@@ -120,6 +107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         AppSwitchingManager.shared.delegate = self
         PersistenceManager.shared.delegate = self
         UsageTrackingManager.shared.delegate = self
+        BreakReminderManager.shared.delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -288,9 +276,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         stopUsageTracking()
         deepFocusTimer?.invalidate()
         deepFocusNotificationTimer?.invalidate()
-        stickyBreakTimer?.invalidate()
+        BreakReminderManager.shared.stopStickyBreakReminders()
         dashboardTimer?.invalidate()
-        breakTimer?.invalidate()
+        BreakReminderManager.shared.BreakReminderManager.shared.stopBreakTimer()
         wellnessQuestionTimer?.invalidate()
     }
 
@@ -684,94 +672,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     // MARK: - Break Timer System
-    private func startBreakTimer(duration: TimeInterval = 900) { // Default 15 minutes
-        stopBreakTimer() // Stop any existing timer
-        
-        isBreakTimerActive = true
-        breakTimerStartTime = Date()
-        
-        print("☕ FastSwitch: Iniciando timer de descanso - \(Int(duration / 60))min")
-        
-        breakTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            self?.showBreakTimerCompleteNotification()
-        }
-        
-        // Update menu to show break timer status
-        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
-    }
     
-    private func stopBreakTimer() {
-        breakTimer?.invalidate()
-        breakTimer = nil
-        isBreakTimerActive = false
-        breakTimerStartTime = nil
-        print("⏹️ FastSwitch: Timer de descanso detenido")
-        
-        // Update menu
-        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
-    }
-    
-    private func getBreakTimerRemaining() -> TimeInterval {
-        guard let startTime = breakTimerStartTime, isBreakTimerActive else { return 0 }
-        let elapsed = Date().timeIntervalSince(startTime)
-        return max(0, 900 - elapsed) // Assuming 15min default
-    }
-    
-    private func showBreakTimerCompleteNotification() {
-        print("⏰ FastSwitch: Timer de descanso completado")
-        isBreakTimerActive = false
-        breakTimerStartTime = nil
-        
-        let content = UNMutableNotificationContent()
-        content.title = "☕ Break Time Complete!"
-        content.body = "🎉 Your break is over!\n\n🏃 Ready to get back to work?\n\n💪 You've got this!"
-        content.sound = UNNotificationSound(named: UNNotificationSoundName("Blow.aiff"))
-        content.badge = NSNumber(value: 1)
-        content.interruptionLevel = .timeSensitive
-        content.categoryIdentifier = "BREAK_TIMER_COMPLETE"
-        
-        // Add action buttons
-        let backToWorkAction = UNNotificationAction(
-            identifier: "BACK_TO_WORK_ACTION",
-            title: "🏃 Back to Work",
-            options: []
-        )
-        
-        let extendBreakAction = UNNotificationAction(
-            identifier: "EXTEND_BREAK_ACTION",
-            title: "☕ +5 Minutes",
-            options: []
-        )
-        
-        let showDashboardAction = UNNotificationAction(
-            identifier: "SHOW_DASHBOARD_ACTION",
-            title: "📊 Show Dashboard",
-            options: [.foreground]
-        )
-        
-        let category = UNNotificationCategory(
-            identifier: "BREAK_TIMER_COMPLETE",
-            actions: [backToWorkAction, extendBreakAction, showDashboardAction],
-            intentIdentifiers: [],
-            options: []
-        )
-        
-        UNUserNotificationCenter.current().setNotificationCategories([category])
-        
-        let request = UNNotificationRequest(
-            identifier: "break-timer-complete-\(Int(Date().timeIntervalSince1970))",
-            content: content,
-            trigger: nil
-        )
-        
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("❌ FastSwitch: Error enviando notificación break timer: \(error)")
-            } else {
-                print("✅ FastSwitch: Notificación break timer enviada")
-            }
-        }
-    }
     
     // MARK: - Custom Focus Duration
     private func setCustomFocusDuration(_ duration: TimeInterval) {
@@ -1899,10 +1800,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         // Update today's data with current session info
         todayData.totalSessionTime = UsageTrackingManager.shared.getCurrentSessionDuration()
         todayData.appUsage = UsageTrackingManager.shared.getAppUsageToday()
-        todayData.breaksTaken = breaksTaken
+        todayData.breaksTaken = BreakReminderManager.shared.getBreaksTaken()
         todayData.continuousWorkSessions = UsageTrackingManager.shared.getContinuousWorkSessions()
         todayData.longestContinuousSession = UsageTrackingManager.shared.getLongestContinuousSession()
-        todayData.totalBreakTime = totalBreakTime
+        todayData.totalBreakTime = BreakReminderManager.shared.getTotalBreakTime()
         todayData.callTime = UsageTrackingManager.shared.getCurrentDayCallTime()
         
         // Add current deep focus session if active
@@ -1965,7 +1866,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             // Handle continuous session tracking
             if isCurrentlyOnBreak {
                 // User was on break and is now active - end break
-                endBreak()
+                BreakReminderManager.shared.endBreak()
             }
             
             if currentContinuousSessionStart == nil {
@@ -1976,7 +1877,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             // Calculate session time and check for notifications
             if let startTime = sessionStartTime {
                 let sessionDuration = currentTime.timeIntervalSince(startTime)
-                checkForBreakNotification(sessionDuration: sessionDuration)
+                BreakReminderManager.shared.checkForBreakNotification(sessionDuration: sessionDuration)
                 updateStatusBarTitle(sessionDuration: sessionDuration)
             }
         } else {
@@ -1984,7 +1885,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             print("😴 FastSwitch: Usuario inactivo (umbral: \(Int(effectiveIdleThreshold))s)")
             
             if !isCurrentlyOnBreak {
-                startBreak()
+                BreakReminderManager.shared.startBreak()
             }
             
             updateStatusBarTitle(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
@@ -2039,7 +1940,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
         
         // Debug break timer status
-        if isBreakTimerActive, let startTime = breakTimerStartTime {
+        if BreakReminderManager.shared.isBreakTimerActive, let startTime = breakTimerStartTime {
             let elapsed = Date().timeIntervalSince(startTime)
             let remaining = max(0, 900 - elapsed) // Assuming 15min default
             let minutesLeft = Int(remaining / 60)
@@ -2266,7 +2167,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     
     
     // MARK: - Break and Session Tracking
-    private func startBreak() {
+    private func BreakReminderManager.shared.startBreak() {
         guard !isCurrentlyOnBreak else { return }
         
         isCurrentlyOnBreak = true
@@ -2290,7 +2191,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
     }
     
-    private func endBreak() {
+    private func BreakReminderManager.shared.endBreak() {
         guard isCurrentlyOnBreak, let breakStart = breakStartTime else { return }
         
         let breakDuration = Date().timeIntervalSince(breakStart)
@@ -2922,11 +2823,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         UsageTrackingManager.shared.resetSession()
         sentNotificationIntervals.removeAll()
         
-        // Reset break and session tracking (break logic will be moved to BreakReminderManager)
-        breaksTaken.removeAll()
-        isCurrentlyOnBreak = false
-        breakStartTime = nil
-        totalBreakTime = 0
+        // Reset break and session tracking
+        BreakReminderManager.shared.resetBreakTracking()
         
         print("🔄 FastSwitch: Sesión y tracking de descansos reiniciados")
     }
@@ -3169,7 +3067,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         // New Break Reminder Actions
         case "START_BREAK_ACTION":
             print("☕ FastSwitch: Usuario inició descanso desde notificación")
-            self.startBreakTimer(duration: 900) // 15 minutes
+            self.BreakReminderManager.shared.startBreakTimer(duration: 900) // 15 minutes
             stopStickyBreakNotifications()
             NSApp.dockTile.badgeLabel = nil
             
@@ -3204,7 +3102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             if isDeepFocusEnabled {
                 self.toggleDeepFocus() // Disable deep focus
             }
-            self.startBreakTimer(duration: 900) // 15 minutes
+            self.BreakReminderManager.shared.startBreakTimer(duration: 900) // 15 minutes
             NSApp.dockTile.badgeLabel = nil
             
         case "SHOW_SESSION_STATS_ACTION":
@@ -3222,12 +3120,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         // Break Timer Complete Actions
         case "BACK_TO_WORK_ACTION":
             print("🏃 FastSwitch: Usuario volvió al trabajo")
-            self.stopBreakTimer()
+            self.BreakReminderManager.shared.stopBreakTimer()
             NSApp.dockTile.badgeLabel = nil
             
         case "EXTEND_BREAK_ACTION":
             print("☕ FastSwitch: Usuario extendió descanso 5min")
-            self.startBreakTimer(duration: 300) // 5 more minutes
+            self.BreakReminderManager.shared.startBreakTimer(duration: 300) // 5 more minutes
             NSApp.dockTile.badgeLabel = nil
             
         case "SHOW_DASHBOARD_ACTION":
@@ -3807,7 +3705,7 @@ extension AppDelegate: UsageTrackingManagerDelegate {
     func usageTrackingManager(_ manager: UsageTrackingManager, didDetectActivity isActive: Bool) {
         // Handle activity detection for break management
         if !isActive && !isCurrentlyOnBreak {
-            startBreak()
+            BreakReminderManager.shared.startBreak()
         }
     }
     
@@ -3824,5 +3722,40 @@ extension AppDelegate: UsageTrackingManagerDelegate {
         updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
         
         print("📞 FastSwitch: Call status changed: \(inCall)")
+    }
+}
+
+// MARK: - BreakReminderManagerDelegate
+
+extension AppDelegate: BreakReminderManagerDelegate {
+    func breakReminderManager(_ manager: BreakReminderManager, didStartBreak duration: TimeInterval) {
+        // Update UI to reflect break state
+        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
+        print("☕ FastSwitch: Break started via BreakReminderManager")
+    }
+    
+    func breakReminderManager(_ manager: BreakReminderManager, didEndBreak duration: TimeInterval) {
+        // Update UI to reflect work state
+        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
+        
+        let minutes = Int(duration / 60)
+        print("🔄 FastSwitch: Break ended after \(minutes) minutes via BreakReminderManager")
+    }
+    
+    func breakReminderManager(_ manager: BreakReminderManager, didSendBreakNotification sessionDuration: TimeInterval) {
+        // Log break notification sent
+        let minutes = Int(sessionDuration / 60)
+        print("📢 FastSwitch: Break notification sent for \(minutes) minute session")
+    }
+    
+    func breakReminderManager(_ manager: BreakReminderManager, needsNotification request: UNNotificationRequest) {
+        // Send notification via system
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error sending break notification: \(error)")
+            } else {
+                print("✅ FastSwitch: Break notification sent successfully")
+            }
+        }
     }
 }
