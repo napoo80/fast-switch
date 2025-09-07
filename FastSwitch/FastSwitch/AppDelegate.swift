@@ -10,8 +10,7 @@ private let DISABLE_WALLPAPER = true
 
 
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate, BreakReminderManagerDelegate, WellnessManagerDelegate {
-    private var statusItem: NSStatusItem!
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate, BreakReminderManagerDelegate, WellnessManagerDelegate, MenuBarManagerDelegate {
     // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
     
@@ -99,116 +98,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         UsageTrackingManager.shared.delegate = self
         BreakReminderManager.shared.delegate = self
         WellnessManager.shared.delegate = self
+        MenuBarManager.shared.delegate = self
 
-        // Status bar
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "F→"
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Solicitar permisos…", action: #selector(requestAutomationPrompts), keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
+        // Setup menu bar
+        MenuBarManager.shared.setupStatusBar()
         
-        // Usage tracking menu items
-        let sessionItem = NSMenuItem(title: "Sesión: 0m", action: nil, keyEquivalent: "")
-        sessionItem.tag = 100 // For easy reference
-        menu.addItem(sessionItem)
-        
-        let callToggleItem = NSMenuItem(title: "🔘 Marcar como llamada", action: #selector(toggleCallStatus), keyEquivalent: "")
-        callToggleItem.tag = 101
-        menu.addItem(callToggleItem)
-        
-        let deepFocusItem = NSMenuItem(title: "🧘 Deep Focus: OFF", action: #selector(toggleDeepFocusFromMenu), keyEquivalent: "")
-        deepFocusItem.tag = 102
-        menu.addItem(deepFocusItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "🔄 Reiniciar sesión", action: #selector(resetSession), keyEquivalent: ""))
-        
-        // Reports submenu
-        let reportsMenu = NSMenu()
-        let reportsItem = NSMenuItem(title: "📊 Reportes", action: nil, keyEquivalent: "")
-        reportsItem.submenu = reportsMenu
-        
-        reportsMenu.addItem(NSMenuItem(title: "📊 Ver Dashboard Diario", action: #selector(showDashboardManually), keyEquivalent: ""))
-        reportsMenu.addItem(NSMenuItem(title: "📈 Reporte Semanal", action: #selector(showWeeklyReport), keyEquivalent: ""))
-        reportsMenu.addItem(NSMenuItem(title: "📅 Reporte Anual", action: #selector(showYearlyReport), keyEquivalent: ""))
-        reportsMenu.addItem(NSMenuItem.separator())
-        reportsMenu.addItem(NSMenuItem(title: "💾 Exportar Datos", action: #selector(exportUsageData), keyEquivalent: ""))
-        
-        menu.addItem(reportsItem)
-        
-        // Mate reduction plan status
-        let mateStatusItem = NSMenuItem(title: "🧉 Plan de Mate: Cargando...", action: #selector(showMateProgress), keyEquivalent: "")
-        mateStatusItem.tag = 103
-        menu.addItem(mateStatusItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Configuration submenu
-        let configMenu = NSMenu()
-        let configItem = NSMenuItem(title: "⚙️ Configuración", action: nil, keyEquivalent: "")
-        configItem.submenu = configMenu
-        
-        let testingItem = NSMenuItem(title: "🔔 Testing: 1-5-10min", action: #selector(setNotificationIntervalTest), keyEquivalent: "")
-        testingItem.tag = 200
-        configMenu.addItem(testingItem)
-        
-        let interval45Item = NSMenuItem(title: "🔔 Recordatorios cada 45m", action: #selector(setNotificationInterval45), keyEquivalent: "")
-        interval45Item.tag = 201
-        configMenu.addItem(interval45Item)
-        
-        let interval60Item = NSMenuItem(title: "🔔 Recordatorios cada 60m", action: #selector(setNotificationInterval60), keyEquivalent: "")
-        interval60Item.tag = 202
-        configMenu.addItem(interval60Item)
-        
-        let interval90Item = NSMenuItem(title: "🔔 Recordatorios cada 90m", action: #selector(setNotificationInterval90), keyEquivalent: "")
-        interval90Item.tag = 203
-        configMenu.addItem(interval90Item)
-        
-        configMenu.addItem(NSMenuItem.separator())
-        
-        let disableItem = NSMenuItem(title: "🔕 Desactivar recordatorios", action: #selector(disableNotifications), keyEquivalent: "")
-        disableItem.tag = 204
-        configMenu.addItem(disableItem)
-        
-        configMenu.addItem(NSMenuItem.separator())
-        configMenu.addItem(NSMenuItem(title: "⚙️ Ajustes de Notificaciones…", action: #selector(openNotificationsPrefs), keyEquivalent: ""))
-        
-        
-        //setupDasungMenu()
-
-        
-        // Optional: uncomment to enable software sticky mode as fallback
-        // let stickyToggleItem = NSMenuItem(title: "🔄 Modo Sticky Software", action: #selector(toggleStickyMode), keyEquivalent: "")
-        // configMenu.addItem(stickyToggleItem)
-        
-        
-        //injectWallpaperMenu(into: menu)
-
-        
+        // Handle wallpaper menu state
         if DISABLE_WALLPAPER {
             WallpaperPhraseManager.shared.stop()
-
-            //if let wpRoot = statusItem.menu?.item(withTag: MenuTag.wallpaperRoot)?.submenu {
-            //    [WPTag.toggle, WPTag.i15, WPTag.i30, WPTag.i60].forEach { tag in
-            //        if let it = wpRoot.item(withTag: tag) {
-            //            it.isEnabled = false
-            //            it.state = .off
-            //        }
-            //    }
-            //}
-        } else {
-            injectWallpaperMenu(into: menu)
         }
-        
-        menu.addItem(configItem)
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Salir", action: #selector(quit), keyEquivalent: "q"))
-        
-        
-        
-        statusItem.menu = menu
-        
-        print("📋 FastSwitch: Menú creado con \(menu.items.count) items")
         
         // Start usage tracking
         UsageTrackingManager.shared.startTracking()
@@ -245,7 +143,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         #endif
         
         // Update initial menu state
-        updateConfigurationMenuState()
+        MenuBarManager.shared.updateConfigurationMenu(mode: .testing)
 
         // Hotkeys
         HotkeyManager.shared.registerHotkeys()
@@ -486,16 +384,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     private func updateStatusBarForFocus() {
-        DispatchQueue.main.async {
-            let focusIndicator = self.isDeepFocusEnabled ? "🧘" : ""
-            let currentTitle = self.statusItem.button?.title ?? "F→"
-            
-            // Remove existing focus indicator if present
-            let cleanTitle = currentTitle.replacingOccurrences(of: "🧘", with: "").trimmingCharacters(in: .whitespaces)
-            
-            // Add focus indicator if enabled
-            self.statusItem.button?.title = self.isDeepFocusEnabled ? "\(focusIndicator) \(cleanTitle)" : cleanTitle
-        }
+        // Focus status is now handled by MenuBarManager
+        MenuBarManager.shared.updateDeepFocusStatus(isDeepFocusEnabled)
     }
     
     private func enableSlackDND() {
@@ -2741,44 +2631,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         let callIndicator = isInCall ? "📞" : ""
         
         DispatchQueue.main.async {
-            self.statusItem.button?.title = "F→ \(callIndicator)\(timeString)"
-            self.updateMenuItems(sessionDuration: sessionDuration)
+            let title = "F→ \(callIndicator)\(timeString)"
+            MenuBarManager.shared.updateTitle(title)
+            MenuBarManager.shared.updateSessionTime(duration: sessionDuration, isInCall: self.isInCall)
         }
     }
     
     private func updateMenuItems(sessionDuration: TimeInterval) {
-        guard let menu = statusItem.menu else { return }
-        
-        let hours = Int(sessionDuration) / 3600
-        let minutes = Int(sessionDuration) % 3600 / 60
-        let timeString = hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
-        
-        // Update session time display
-        if let sessionItem = menu.item(withTag: 100) {
-            let statusText = isInCall ? "📞 En llamada: \(timeString)" : "⏰ Sesión: \(timeString)"
-            sessionItem.title = statusText
-        }
-        
-        // Update call toggle button
-        if let callToggleItem = menu.item(withTag: 101) {
-            if manualCallToggle {
-                callToggleItem.title = "🔴 Desmarcar llamada"
-            } else {
-                callToggleItem.title = "🔘 Marcar como llamada"
-            }
-        }
-        
-        // Update deep focus status
-        if let deepFocusItem = menu.item(withTag: 102) {
-            if isDeepFocusEnabled, let startTime = deepFocusStartTime {
-                let elapsed = Date().timeIntervalSince(startTime)
-                let remaining = max(0, customFocusDuration - elapsed)
-                let remainingMinutes = Int(remaining / 60)
-                deepFocusItem.title = "🧘 Deep Focus: ON (\(remainingMinutes)min left)"
-            } else {
-                deepFocusItem.title = "🧘 Deep Focus: OFF"
-            }
-        }
+        // Menu item updates now handled by MenuBarManager
+        MenuBarManager.shared.updateCallStatus(manualCallToggle)
+        MenuBarManager.shared.updateDeepFocusStatus(isDeepFocusEnabled)
     }
     
     @objc private func toggleCallStatus() {
@@ -2896,44 +2758,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     private func updateConfigurationMenuState() {
-        guard let menu = statusItem.menu else { return }
-        
-        // Find the configuration submenu
-        var configSubmenu: NSMenu?
-        for item in menu.items {
-            if item.title == "⚙️ Configuración", let submenu = item.submenu {
-                configSubmenu = submenu
-                break
-            }
-        }
-        
-        guard let configMenu = configSubmenu else { return }
-        
-        // Clear all checkmarks first
-        for item in configMenu.items {
-            if item.tag >= 200 && item.tag <= 204 {
-                item.state = .off
-            }
-        }
-        
-        // Set checkmark for current mode
-        let tagToCheck: Int
+        // Configuration menu state now handled by MenuBarManager
+        let mode: NotificationMode
         switch currentNotificationMode {
         case .testing:
-            tagToCheck = 200
+            mode = .testing
         case .interval45:
-            tagToCheck = 201
+            mode = .interval45
         case .interval60:
-            tagToCheck = 202
+            mode = .interval60
         case .interval90:
-            tagToCheck = 203
+            mode = .interval90
         case .disabled:
-            tagToCheck = 204
+            mode = .disabled
         }
-        
-        if let itemToCheck = configMenu.item(withTag: tagToCheck) {
-            itemToCheck.state = .on
-        }
+        MenuBarManager.shared.updateConfigurationMenu(mode: mode)
     }
     
     
@@ -3518,15 +3357,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     private func updateMateMenuStatus() {
-        guard let menu = statusItem.menu else { return }
-        
-        if let mateItem = menu.item(withTag: 103) {
-            let target = mateReductionPlan.getCurrentTargetThermos()
-            let phase = mateReductionPlan.currentPhase + 1
-            
-            let status = todayMateCount >= target ? "✅" : "🔄"
-            mateItem.title = "🧉 Fase \(phase): \(todayMateCount)/\(target) termos \(status)"
-        }
+        // Mate status now handled by MenuBarManager
+        let target = mateReductionPlan.getCurrentTargetThermos()
+        let phase = mateReductionPlan.currentPhase + 1
+        MenuBarManager.shared.updateMateStatus(phase: phase, current: todayMateCount, target: target)
     }
     
     
@@ -3594,7 +3428,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
 //    `motivationalPhrases.map { $0.text }` de tu app.
 // 2) Agregá estas propiedades y acciones al AppDelegate.
 extension AppDelegate {
-    private enum WPTag { static let toggle = 300; static let now = 301; static let i15 = 302; static let i30 = 303; static let i60 = 304 }
 
     @objc func togglePhraseWallpaper() {
         if WallpaperPhraseManager.shared.isEnabled {
@@ -3616,48 +3449,15 @@ extension AppDelegate {
     @objc func setWPInterval30() { WallpaperPhraseManager.shared.interval = 30*60; WallpaperPhraseManager.shared.updateNow(); updateWallpaperMenuState() }
     @objc func setWPInterval60() { WallpaperPhraseManager.shared.interval = 60*60; WallpaperPhraseManager.shared.updateNow(); updateWallpaperMenuState() }
 
-    func injectWallpaperMenu(into menu: NSMenu) {
-        let wpMenu = NSMenu()
-        let root = NSMenuItem(title: "🖼️ Wallpaper de frases", action: nil, keyEquivalent: "")
-        root.submenu = wpMenu
-
-        let toggle = NSMenuItem(title: "OFF", action: #selector(togglePhraseWallpaper), keyEquivalent: "")
-        toggle.tag = WPTag.toggle; toggle.target = self
-        wpMenu.addItem(toggle)
-
-        let now = NSMenuItem(title: "Cambiar ahora", action: #selector(changePhraseNow), keyEquivalent: "")
-        now.tag = WPTag.now; now.target = self
-        wpMenu.addItem(now)
-
-        wpMenu.addItem(.separator())
-        for (title, sel, tag) in [("Intervalo 15m", #selector(setWPInterval15), WPTag.i15),
-                                  ("Intervalo 30m", #selector(setWPInterval30), WPTag.i30),
-                                  ("Intervalo 60m", #selector(setWPInterval60), WPTag.i60)] {
-            let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
-            it.tag = tag; it.target = self
-            wpMenu.addItem(it)
-        }
-
-        menu.addItem(.separator())
-        menu.addItem(root)
-        updateWallpaperMenuState()
-    }
 
     // ÚNICA función de refresco (sin parámetro)
     func updateWallpaperMenuState() {
-        guard let menu = statusItem.menu,
-              let wpRoot = menu.items.first(where: { $0.submenu?.item(withTag: WPTag.toggle) != nil })?.submenu
-        else { return }
-
-        if let toggle = wpRoot.item(withTag: WPTag.toggle) {
-            let mins = Int(WallpaperPhraseManager.shared.interval / 60)
-            toggle.title = WallpaperPhraseManager.shared.isEnabled ? "ON (\(mins)m)" : "OFF"
-        }
-
-        let current = Int(WallpaperPhraseManager.shared.interval)
-        [(WPTag.i15, 900), (WPTag.i30, 1800), (WPTag.i60, 3600)].forEach { (tag, secs) in
-            wpRoot.item(withTag: tag)?.state = (current == secs) ? .on : .off
-        }
+        // Wallpaper menu state now handled by MenuBarManager
+        let intervalMinutes = Int(WallpaperPhraseManager.shared.interval / 60)
+        MenuBarManager.shared.updateWallpaperMenu(
+            isEnabled: WallpaperPhraseManager.shared.isEnabled,
+            intervalMinutes: intervalMinutes
+        )
     }
 }
 
@@ -3780,5 +3580,89 @@ extension AppDelegate: WellnessManagerDelegate {
         PersistenceManager.shared.saveDailyData(todayData)
         
         print("📝 FastSwitch: Daily reflection saved via WellnessManager")
+    }
+}
+
+// MARK: - MenuBarManagerDelegate
+
+extension AppDelegate: MenuBarManagerDelegate {
+    func menuBarManager(_ manager: MenuBarManager, requestAutomationPermissions: Void) {
+        requestAutomationPrompts()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, toggleCallStatus: Void) {
+        toggleCallStatus()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, toggleDeepFocus: Void) {
+        toggleDeepFocusFromMenu()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, resetSession: Void) {
+        resetSession()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, showDashboard: Void) {
+        showDashboardManually()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, showWeeklyReport: Void) {
+        showWeeklyReport()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, showYearlyReport: Void) {
+        showYearlyReport()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, exportData: Void) {
+        exportUsageData()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, showMateProgress: Void) {
+        showMateProgress()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, setNotificationMode mode: NotificationMode) {
+        switch mode {
+        case .testing:
+            setNotificationIntervalTest()
+        case .interval45:
+            setNotificationInterval45()
+        case .interval60:
+            setNotificationInterval60()
+        case .interval90:
+            setNotificationInterval90()
+        case .disabled:
+            disableNotifications()
+        }
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, openNotificationPrefs: Void) {
+        openNotificationsPrefs()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, quitApp: Void) {
+        quit()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, toggleWallpaperPhrases: Void) {
+        togglePhraseWallpaper()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, changeWallpaperNow: Void) {
+        changePhraseNow()
+    }
+    
+    func menuBarManager(_ manager: MenuBarManager, setWallpaperInterval minutes: Int) {
+        switch minutes {
+        case 15:
+            setWPInterval15()
+        case 30:
+            setWPInterval30()
+        case 60:
+            setWPInterval60()
+        default:
+            break
+        }
     }
 }
