@@ -9,35 +9,10 @@ private let DISABLE_WALLPAPER = true
 
 
 
-// MARK: - Carbon hotkey callback
-private func hotKeyHandler(_ nextHandler: EventHandlerCallRef?,
-                           _ event: EventRef?,
-                           _ userData: UnsafeMutableRawPointer?) -> OSStatus {
-    guard let event, let userData else { return noErr }
-    var hkID = EventHotKeyID()
-    let status = GetEventParameter(event,
-                                   EventParamName(kEventParamDirectObject),
-                                   EventParamType(typeEventHotKeyID),
-                                   nil,
-                                   MemoryLayout<EventHotKeyID>.size,
-                                   nil,
-                                   &hkID)
-    guard status == noErr else { return status }
-    let keyCode = hkID.id
-    let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
-    delegate.handleHotKey(keyCode: keyCode)
-    return noErr
-}
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate {
     private var statusItem: NSStatusItem!
-    private var eventHandlerRef: EventHandlerRef?
-    private var hotKeys: [EventHotKeyRef?] = []
-
-    // Double-tap detection
-    private var lastKeyCode: UInt32?
-    private var lastPressDate: Date?
-    private let doubleTapWindow: TimeInterval = 0.45
+    // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
     
     // Usage tracking
@@ -124,30 +99,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
     private var mateNotificationHistory: [Date] = []
 
     // F-keys → apps/acciones
-    private let mapping: [UInt32: String] = [
-        UInt32(kVK_F1):  "com.google.Chrome",
-        UInt32(kVK_F2):  "com.microsoft.VSCode",            // 1 tap: VSCode, 2 taps: Ctrl+W (Window Switcher)
-        UInt32(kVK_F3):  "com.todesktop.230313mzl4w4u92",   // 1 tap: Cursor, 2 taps: Ctrl+W (Window Switcher)
-        UInt32(kVK_F4):  "com.apple.finder",
-
-        //UInt32(kVK_F5):  "action:meet-mic",                 // ⌘D (Meet)
-        //UInt32(kVK_F6):  "action:meet-cam",                 // ⌘E (Meet)
-        //UInt32(kVK_F7):  "action:deep-focus",               // enables/disables focus
-        
-        
-        UInt32(kVK_F5):  "action:dasung-refresh",
-        UInt32(kVK_F6):  "action:paperlike-resolution",               // placeholder
-        UInt32(kVK_F7):  "action:paperlike-optimize",          // placeholder
-        
-        //UInt32(kVK_F8):  "com.spotify.client",
-        UInt32(kVK_F8):  "com.tinyspeck.slackmacgap",
-        UInt32(kVK_F19): "notion.id",
-        UInt32(kVK_F10): "com.apple.TextEdit",
-        UInt32(kVK_F11): "com.apple.Terminal",
-        UInt32(kVK_F12): "com.mitchellh.ghostty"
-
-
-    ]
 
     // MARK: - Lifecycle
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -164,7 +115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
         }
         
         print("🚀 FastSwitch: Starting up...")
-        print("⏱️ FastSwitch: Double-tap window: \(doubleTapWindow)s, Action delay: \(actionDelay)s")
+        print("⏱️ FastSwitch: Action delay: \(actionDelay)s")
         
         // Menu-bar only (hide Dock & app switcher)
         NSApp.setActivationPolicy(.accessory)
@@ -172,8 +123,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
         
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
-        // Setup notification manager
+        // Setup managers
         NotificationManager.shared.delegate = self
+        HotkeyManager.shared.delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -335,15 +287,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
         updateConfigurationMenuState()
 
         // Hotkeys
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
-                                      eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(),
-                            hotKeyHandler,
-                            1,
-                            &eventType,
-                            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
-                            &eventHandlerRef)
-        registerHotkeys()
+        HotkeyManager.shared.registerHotkeys()
     }
 
     func applicationWillTerminate(_ notification: Notification) { 
@@ -351,7 +295,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
         saveTodayData()
         saveUsageHistory()
         
-        unregisterHotkeys()
+        HotkeyManager.shared.unregisterHotkeys()
         stopUsageTracking()
         deepFocusTimer?.invalidate()
         deepFocusNotificationTimer?.invalidate()
@@ -361,46 +305,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
         wellnessQuestionTimer?.invalidate()
     }
 
-    private func registerHotkeys() {
-        unregisterHotkeys()
-        print("🔧 FastSwitch: Registering hotkeys...")
-        for (keyCode, target) in mapping {
-            var ref: EventHotKeyRef?
-            let id = EventHotKeyID(signature: OSType(0x484B5953), id: keyCode) // 'HKYS'
-            let result = RegisterEventHotKey(keyCode, 0, id, GetApplicationEventTarget(), 0, &ref)
-            hotKeys.append(ref)
-            let fKeyNumber = getFKeyNumber(for: keyCode)
-            print("   F\(fKeyNumber) (code: \(keyCode)) → \(target) [result: \(result)]")
-        }
-        print("✅ FastSwitch: \(hotKeys.count) hotkeys registered")
-    }
-    private func unregisterHotkeys() {
-        for hk in hotKeys { if let hk { UnregisterEventHotKey(hk) } }
-        hotKeys.removeAll()
-    }
 
-    // MARK: - Main handler
-    fileprivate func handleHotKey(keyCode: UInt32) {
-        guard let target = mapping[keyCode] else { 
-            print("⚠️ FastSwitch: No mapping found for keyCode: \(keyCode)")
-            return 
-        }
-        
-        let now = Date()
-        let timeSinceLastPress = lastPressDate != nil ? now.timeIntervalSince(lastPressDate!) : 999.0
-        let isDoubleTap = (lastKeyCode == keyCode) && (lastPressDate != nil)
-                       && (timeSinceLastPress < doubleTapWindow)
-        
-        print("🔑 FastSwitch: Key F\(getFKeyNumber(for: keyCode)) pressed (code: \(keyCode)) → \(target)")
-        print("   Last key: \(lastKeyCode ?? 0), Time since last: \(String(format: "%.3f", timeSinceLastPress))s")
-        print("   Double tap window: \(doubleTapWindow)s, Is double tap: \(isDoubleTap)")
-        
-        lastKeyCode = keyCode
-        lastPressDate = now
-
-        if target.hasPrefix("action:") {
-            print("🎬 FastSwitch: Executing action: \(target)")
-            switch target {
+    // MARK: - HotkeyManagerDelegate
+    func hotkeyManager(_ manager: HotkeyManager, didReceiveAction action: String) {
+        if action.hasPrefix("action:") {
+            print("🎬 FastSwitch: Executing action: \(action)")
+            switch action {
             case "action:meet-mic": toggleMeetMic()
             case "action:meet-cam": toggleMeetCam()
             case "action:deep-focus": toggleDeepFocus()
@@ -411,18 +321,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
             case "action:paperlike-optimize": toggleGlobalGrayscale()
             default: break
             }
-            return
-        }
-
-        if isDoubleTap {
-            print("👆👆 FastSwitch: DOUBLE TAP detected - activating app + in-app action")
-            activateApp(bundleID: target) { [weak self] in 
-                print("📱 FastSwitch: App activated, triggering in-app action for \(target)")
-                self?.triggerInAppAction(for: target) 
-            }
         } else {
-            print("👆 FastSwitch: SINGLE TAP - activating app only")
-            activateApp(bundleID: target, completion: nil)
+            // Single tap - activate app only
+            activateApp(bundleID: action, completion: nil)
+        }
+    }
+    
+    func hotkeyManager(_ manager: HotkeyManager, didReceiveDoubleAction action: String, completion: (() -> Void)?) {
+        // Double tap - activate app + in-app action
+        activateApp(bundleID: action) { [weak self] in
+            self?.triggerInAppAction(for: action)
+            completion?()
         }
     }
 
@@ -1945,23 +1854,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate 
         NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleID }
     }
     
-    private func getFKeyNumber(for keyCode: UInt32) -> String {
-        switch keyCode {
-        case UInt32(kVK_F1): return "1"
-        case UInt32(kVK_F2): return "2"
-        case UInt32(kVK_F3): return "3"
-        case UInt32(kVK_F4): return "4"
-        case UInt32(kVK_F5): return "5"
-        case UInt32(kVK_F6): return "6"
-        case UInt32(kVK_F7): return "7"
-        case UInt32(kVK_F8): return "8"
-        case UInt32(kVK_F9): return "9"
-        case UInt32(kVK_F10): return "10"
-        case UInt32(kVK_F11): return "11"
-        case UInt32(kVK_F12): return "12"
-        default: return "?\(keyCode)"
-        }
-    }
 
     // System Events keystrokes
     private func sendShortcut(letter: String,
