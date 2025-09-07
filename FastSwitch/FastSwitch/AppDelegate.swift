@@ -10,7 +10,7 @@ private let DISABLE_WALLPAPER = true
 
 
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate, BreakReminderManagerDelegate, WellnessManagerDelegate, MenuBarManagerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate, BreakReminderManagerDelegate, WellnessManagerDelegate, MenuBarManagerDelegate, DeepFocusManagerDelegate {
     // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
     
@@ -99,6 +99,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         BreakReminderManager.shared.delegate = self
         WellnessManager.shared.delegate = self
         MenuBarManager.shared.delegate = self
+        DeepFocusManager.shared.delegate = self
 
         // Setup menu bar
         MenuBarManager.shared.setupStatusBar()
@@ -174,7 +175,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             switch action {
             case "action:meet-mic": toggleMeetMic()
             case "action:meet-cam": toggleMeetCam()
-            case "action:deep-focus": toggleDeepFocus()
+            case "action:deep-focus": DeepFocusManager.shared.toggleDeepFocus()
             case "action:insta360-track": toggleInsta360Tracking()
             case "action:dasung-refresh":
                 DasungRefresher.shared.refreshPaperlike()
@@ -3664,5 +3665,50 @@ extension AppDelegate: MenuBarManagerDelegate {
         default:
             break
         }
+    }
+}
+
+// MARK: - DeepFocusManagerDelegate
+
+extension AppDelegate: DeepFocusManagerDelegate {
+    func deepFocusManager(_ manager: DeepFocusManager, didToggleFocus enabled: Bool) {
+        // Update menu bar focus status
+        MenuBarManager.shared.updateDeepFocusStatus(enabled)
+        updateStatusBarForFocus()
+    }
+    
+    func deepFocusManager(_ manager: DeepFocusManager, needsSlackDND enabled: Bool) {
+        if enabled {
+            enableSlackDND()
+        } else {
+            disableSlackDND()
+        }
+    }
+    
+    func deepFocusManager(_ manager: DeepFocusManager, needsSystemDND enabled: Bool) {
+        if enabled {
+            enableSystemDND()
+        } else {
+            disableSystemDND()
+        }
+    }
+    
+    func deepFocusManager(_ manager: DeepFocusManager, needsNotification request: UNNotificationRequest) {
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ FastSwitch: Error sending Deep Focus notification: \(error)")
+            } else {
+                print("✅ FastSwitch: Deep Focus sticky notification sent")
+            }
+        }
+    }
+    
+    func deepFocusManager(_ manager: DeepFocusManager, didCompleteSession duration: TimeInterval) {
+        // Record the focus session
+        let minutes = Int(duration / 60)
+        print("🧘 FastSwitch: Deep Focus session completed (\(minutes)min)")
+        
+        // Could save to persistence or analytics here
+        saveTodayData()
     }
 }
