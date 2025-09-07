@@ -10,7 +10,7 @@ private let DISABLE_WALLPAPER = true
 
 
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate {
     private var statusItem: NSStatusItem!
     // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
@@ -126,6 +126,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         // Setup managers
         NotificationManager.shared.delegate = self
         HotkeyManager.shared.delegate = self
+        AppSwitchingManager.shared.delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -323,58 +324,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             }
         } else {
             // Single tap - activate app only
-            activateApp(bundleID: action, completion: nil)
+            AppSwitchingManager.shared.activateApp(bundleID: action)
         }
     }
     
     func hotkeyManager(_ manager: HotkeyManager, didReceiveDoubleAction action: String, completion: (() -> Void)?) {
         // Double tap - activate app + in-app action
-        activateApp(bundleID: action) { [weak self] in
-            self?.triggerInAppAction(for: action)
-            completion?()
-        }
+        AppSwitchingManager.shared.activateAppWithAction(bundleID: action, completion: completion)
     }
 
-    // MARK: - Activation / double-tap actions
-    private func activateApp(bundleID: String, completion: (() -> Void)?) {
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = true
-        NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, _ in
-            if let completion { DispatchQueue.main.asyncAfter(deadline: .now() + self.actionDelay) { completion() } }
-        }
+    // MARK: - AppSwitchingManagerDelegate
+    func appSwitchingManager(_ manager: AppSwitchingManager, needsAppleScript script: String) {
+        runAppleScript(script, openPrefsOnError: false)
     }
-
-    private func triggerInAppAction(for bundleID: String) {
-        print("🔥 FastSwitch: triggerInAppAction called for bundleID: \(bundleID)")
-        
-        switch bundleID {
-        case "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92":
-            // F2/F3 double → Ctrl+W (Window Switcher for VSCode/Cursor)
-            print("⌨️ FastSwitch: Sending Ctrl+W for VSCode/Cursor")
-            sendShortcut(letter: "w", control: true)              // Ctrl+W
-        case "com.google.Chrome", "com.apple.finder", "com.apple.Terminal", "com.mitchellh.ghostty":
-            print("⌨️ FastSwitch: Sending ⌘T for \(bundleID)")
-            sendShortcut(letter: "t", command: true)               // ⌘T
-        case "com.spotify.client":
-            print("🎵 FastSwitch: Sending play/pause for Spotify")
-            playPauseSpotifyWithRetry()                            // simple toggle
-        case "com.apple.TextEdit":
-            print("⌨️ FastSwitch: Sending ⌘N for TextEdit")
-            sendShortcut(letter: "n", command: true)               // ⌘N
-        case "notion.id", "com.notion.Notion":
-            print("⌨️ FastSwitch: Sending ⌘N for Notion")
-            sendShortcut(letter: "n", command: true)               // ⌘N
+    
+    func appSwitchingManager(_ manager: AppSwitchingManager, needsSpotifyAction action: String) {
+        switch action {
+        case "playPause":
+            playPauseSpotifyWithRetry()
         default:
-            print("❌ FastSwitch: No in-app action configured for bundleID: \(bundleID)")
             break
         }
     }
 
     // MARK: - Permissions (Chrome / System Events / Spotify) — SAFE
     @objc private func requestAutomationPrompts() {
-        preopenIfNeeded(bundleID: "com.google.Chrome")
-        preopenIfNeeded(bundleID: "com.spotify.client")
+        AppSwitchingManager.shared.preopenIfNeeded(bundleID: "com.google.Chrome")
+        AppSwitchingManager.shared.preopenIfNeeded(bundleID: "com.spotify.client")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self else { return }
@@ -399,13 +375,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
     }
 
-    private func preopenIfNeeded(bundleID: String) {
-        guard !isAppRunning(bundleID: bundleID),
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.activates = false
-        NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, _ in }
-    }
 
     // MARK: - Meet (Chrome)
     private func toggleMeetMic() {
@@ -418,7 +387,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             print("🎤 FastSwitch: Meet detectado, activando estado de llamada")
         }
         
-        activateApp(bundleID: chrome) { [weak self] in
+        AppSwitchingManager.shared.activateApp(bundleID: chrome) { [weak self] in
             guard let self = self else { return }
             if self.chromeFrontTabIsMeet() { 
                 self.sendShortcut(letter: "d", command: true) // ⌘D
@@ -437,7 +406,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             print("📹 FastSwitch: Meet detectado, activando estado de llamada")
         }
         
-        activateApp(bundleID: chrome) { [weak self] in
+        AppSwitchingManager.shared.activateApp(bundleID: chrome) { [weak self] in
             guard let self = self else { return }
             if self.chromeFrontTabIsMeet() { 
                 self.sendShortcut(letter: "e", command: true) // ⌘E
@@ -1835,7 +1804,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     // MARK: - Spotify (bundle id)
     private func playPauseSpotifyWithRetry() {
         func tryPlay(_ remaining: Int) {
-            if isAppRunning(bundleID: "com.spotify.client") {
+            if AppSwitchingManager.shared.isAppRunning(bundleID: "com.spotify.client") {
                 runAppleScript(#"tell application "Spotify" to playpause"#)
             } else if remaining > 0 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { tryPlay(remaining - 1) }
@@ -1843,16 +1812,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
                 print("Spotify no inició a tiempo; omitido play/pause.")
             }
         }
-        if !isAppRunning(bundleID: "com.spotify.client") {
-            self.activateApp(bundleID: "com.spotify.client", completion: nil)
+        if !AppSwitchingManager.shared.isAppRunning(bundleID: "com.spotify.client") {
+            AppSwitchingManager.shared.activateApp(bundleID: "com.spotify.client")
         }
         tryPlay(10)
     }
 
     // MARK: - Utilities
-    private func isAppRunning(bundleID: String) -> Bool {
-        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleID }
-    }
     
 
     // System Events keystrokes
@@ -1903,10 +1869,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
                 if openPrefsOnError {
                     if num == 1002, // Accessibility not allowed
                        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                        NSWorkspace.shared.open(url)
+                        AppSwitchingManager.shared.openURL(url)
                     } else if num == -1743, // Automation not permitted
                               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") {
-                        NSWorkspace.shared.open(url)
+                        AppSwitchingManager.shared.openURL(url)
                     }
                 }
                 print("AppleScript error:", error)
@@ -2165,7 +2131,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         var detectedApps: [String] = []
         
         for bundleID in callApps {
-            if isAppRunning(bundleID: bundleID) {
+            if AppSwitchingManager.shared.isAppRunning(bundleID: bundleID) {
                 detectedApps.append(bundleID)
                 if bundleID == "com.google.Chrome" {
                     // Check if Chrome has a Meet tab
@@ -2460,7 +2426,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             for (app, time) in sortedApps.prefix(10) { // Top 10 apps
                 let hours = Int(time) / 3600
                 let minutes = Int(time) % 3600 / 60
-                let appName = getAppDisplayName(from: app)
+                let appName = AppSwitchingManager.shared.getAppDisplayName(from: app)
                 
                 // Calculate percentage
                 let percentage = totalAppTime > 0 ? (time / totalAppTime) * 100 : 0
@@ -2647,7 +2613,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             for (app, time) in sortedApps.prefix(5) {
                 let appHours = Int(time) / 3600
                 let appMinutes = Int(time) % 3600 / 60
-                let appName = getAppDisplayName(from: app)
+                let appName = AppSwitchingManager.shared.getAppDisplayName(from: app)
                 
                 if appHours > 0 {
                     report += "  • \(appName): \(appHours)h \(appMinutes)m\n"
@@ -2732,7 +2698,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             for (app, time) in sortedApps.prefix(10) {
                 let appHours = Int(time) / 3600
                 let appMinutes = Int(time) % 3600 / 60
-                let appName = getAppDisplayName(from: app)
+                let appName = AppSwitchingManager.shared.getAppDisplayName(from: app)
                 
                 if appHours > 0 {
                     report += "  • \(appName): \(appHours)h \(appMinutes)m\n"
@@ -2785,22 +2751,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         return monthlyData
     }
     
-    private func getAppDisplayName(from identifier: String) -> String {
-        // Try to get user-friendly app name
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier),
-           let bundle = Bundle(url: url),
-           let displayName = bundle.localizedInfoDictionary?["CFBundleDisplayName"] as? String ??
-                             bundle.infoDictionary?["CFBundleDisplayName"] as? String ??
-                             bundle.localizedInfoDictionary?["CFBundleName"] as? String ??
-                             bundle.infoDictionary?["CFBundleName"] as? String {
-            return displayName
-        }
-        
-        // Fallback to bundle identifier with some cleanup
-        return identifier.replacingOccurrences(of: "com.", with: "")
-                        .replacingOccurrences(of: "app.", with: "")
-                        .components(separatedBy: ".").last ?? identifier
-    }
     
     private func askDailyReflection() {
         print("📝 FastSwitch: Pregunta de reflexión diaria")
