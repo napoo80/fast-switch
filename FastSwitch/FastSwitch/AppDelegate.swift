@@ -361,6 +361,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // MARK: - Lifecycle
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Check if another instance is already running
+        let runningApps = NSWorkspace.shared.runningApplications
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        
+        for app in runningApps {
+            if app.bundleIdentifier == Bundle.main.bundleIdentifier && app.processIdentifier != currentPID {
+                print("⚠️ FastSwitch: Another instance is already running, exiting...")
+                NSApp.terminate(nil)
+                return
+            }
+        }
+        
         print("🚀 FastSwitch: Starting up...")
         print("⏱️ FastSwitch: Double-tap window: \(doubleTapWindow)s, Action delay: \(actionDelay)s")
         
@@ -1520,17 +1532,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
     
     private func saveMateReductionPlan() {
-        if let encoded = try? JSONEncoder().encode(mateReductionPlan) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let encoded = try? encoder.encode(mateReductionPlan) {
             UserDefaults.standard.set(encoded, forKey: "MateReductionPlan")
             print("✅ FastSwitch: Plan de reducción de mate guardado")
         }
     }
     
     private func loadMateReductionPlan() {
-        if let data = UserDefaults.standard.data(forKey: "MateReductionPlan"),
-           let plan = try? JSONDecoder().decode(MateReductionPlan.self, from: data) {
-            mateReductionPlan = plan
-            print("✅ FastSwitch: Plan de reducción de mate cargado - Fase \(plan.currentPhase)")
+        if let data = UserDefaults.standard.data(forKey: "MateReductionPlan") {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            if let plan = try? decoder.decode(MateReductionPlan.self, from: data) {
+                mateReductionPlan = plan
+                print("✅ FastSwitch: Plan de reducción de mate cargado - Fase \(plan.currentPhase)")
+            } else {
+                // Initialize new plan
+                mateReductionPlan = MateReductionPlan()
+                saveMateReductionPlan()
+                print("🆕 FastSwitch: Nuevo plan de reducción de mate iniciado")
+            }
         } else {
             // Initialize new plan
             mateReductionPlan = MateReductionPlan()
@@ -2029,10 +2051,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     
     // E-ink nítido (HiDPI). Probá 60 Hz primero; si notás glitches, cambiá a 40 Hz.
-    private let ochocientosPorSeiscientos = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:800x600 hz:40 color_depth:8 scaling:on origin:(-800,0) degree:0"#
+    private var ochocientosPorSeiscientos: String {
+        return #"id:\#(DasungRefresher.shared.dasungDisplayUUID) res:800x600 hz:40 color_depth:8 scaling:on origin:(-800,0) degree:0"#
+    }
 
     // Volver a tu modo actual del DASUNG
-    private let novecientosPorSieteVeinte   = #"id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:960x720 hz:40 color_depth:8 scaling:on origin:(960,0) degree:0"#
+    private var novecientosPorSieteVeinte: String {
+        return #"id:\#(DasungRefresher.shared.dasungDisplayUUID) res:960x720 hz:40 color_depth:8 scaling:on origin:(960,0) degree:0"#
+    }
 
     
     //displayplacer "id:1E6E43E3-2C58-43E0-8813-B7079CD9FEFA res:800x600  hz:40  color_depth:8 scaling:on origin:(-800,0)  degree:0"
@@ -2224,10 +2250,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     // MARK: - Persistent Storage
     private func loadUsageHistory() {
-        if let data = UserDefaults.standard.data(forKey: usageHistoryKey),
-           let history = try? JSONDecoder().decode(UsageHistory.self, from: data) {
-            usageHistory = history
-            print("📂 FastSwitch: Historial de uso cargado - \(history.dailyData.count) días")
+        if let data = UserDefaults.standard.data(forKey: usageHistoryKey) {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            if let history = try? decoder.decode(UsageHistory.self, from: data) {
+                usageHistory = history
+                print("📂 FastSwitch: Historial de uso cargado - \(history.dailyData.count) días")
+            } else {
+                usageHistory = UsageHistory()
+                print("📂 FastSwitch: Iniciando nuevo historial de uso")
+            }
         } else {
             usageHistory = UsageHistory()
             print("📂 FastSwitch: Iniciando nuevo historial de uso")
@@ -2236,7 +2268,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     private func saveUsageHistory() {
         do {
-            let data = try JSONEncoder().encode(usageHistory)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(usageHistory)
             UserDefaults.standard.set(data, forKey: usageHistoryKey)
             print("💾 FastSwitch: Historial guardado - \(usageHistory.dailyData.count) días")
         } catch {
@@ -3447,7 +3481,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
                 do {
-                    let data = try JSONEncoder().encode(self.usageHistory)
+                    // Set proper date encoding for analyzer compatibility
+                    let encoder = JSONEncoder()
+                    encoder.dateEncodingStrategy = .iso8601
+                    
+                    let data = try encoder.encode(self.usageHistory)
                     try data.write(to: url)
                     
                     // Show success notification

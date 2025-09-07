@@ -9,8 +9,31 @@ final class DasungRefresher {
 
     static let shared = DasungRefresher()
 
-    /// Cambiá este UUID por el real de tu Paperlike (de `displayplacer list`).
-    var dasungDisplayUUID = "1E6E43E3-2C58-43E0-8813-B7079CD9FEFA"
+    /// UUIDs conocidos del monitor Dasung en diferentes computadoras
+    private let knownDasungUUIDs = [
+        "1E6E43E3-2C58-43E0-8813-B7079CD9FEFA", // compu personal
+        "E2570BBE-2774-45DC-ACBF-E1BDFB468DD1"  // compu del trabajo
+    ]
+    
+    /// UUID actual detectado del monitor Dasung
+    private var _detectedUUID: String?
+    
+    var dasungDisplayUUID: String {
+        if let detected = _detectedUUID {
+            return detected
+        }
+        
+        // Buscar cuál de los UUIDs conocidos está conectado
+        for uuid in knownDasungUUIDs {
+            if NSScreen.screens.contains(where: { $0.displayUUIDString?.caseInsensitiveCompare(uuid) == .orderedSame }) {
+                _detectedUUID = uuid
+                return uuid
+            }
+        }
+        
+        // Fallback al primero si no encuentra ninguno
+        return knownDasungUUIDs[0]
+    }
     
     var useRotationHop = false
 
@@ -18,7 +41,7 @@ final class DasungRefresher {
     /// Alias para compatibilidad con código viejo que usa `dasungDisplayID`.
     var dasungDisplayID: String {
         get { dasungDisplayUUID }
-        set { dasungDisplayUUID = newValue }
+        set { _detectedUUID = newValue }
     }
 
     // ————— API pública —————
@@ -120,8 +143,14 @@ final class DasungRefresher {
 
     /// Útil para ver los UUID que macOS detecta.
     func debugDumpDisplays() {
+        print("🔍 Buscando monitor Dasung...")
+        print("📋 UUIDs conocidos: \(knownDasungUUIDs)")
+        print("✅ UUID detectado: \(dasungDisplayUUID)")
+        print("")
         for s in NSScreen.screens {
-            print("🖥️ \(s.localizedName) — uuid: \(s.displayUUIDString ?? "nil") frame: \(s.frame)")
+            let isKnown = knownDasungUUIDs.contains { $0.caseInsensitiveCompare(s.displayUUIDString ?? "") == .orderedSame }
+            let marker = isKnown ? "🎯" : "🖥️"
+            print("\(marker) \(s.localizedName) — uuid: \(s.displayUUIDString ?? "nil") frame: \(s.frame)")
         }
     }
 }
