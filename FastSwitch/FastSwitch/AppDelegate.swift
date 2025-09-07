@@ -10,7 +10,7 @@ private let DISABLE_WALLPAPER = true
 
 
 
-class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate, HotkeyManagerDelegate, AppSwitchingManagerDelegate, PersistenceManagerDelegate, UsageTrackingManagerDelegate {
     private var statusItem: NSStatusItem!
     // Action delay for double-tap actions
     private let actionDelay: TimeInterval = 0.12
@@ -40,20 +40,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     // Deep Focus: guardá el último ID para poder limpiarlo (bugfix)
     private var lastDeepFocusNotificationID: String?
     
-    // App tracking and dashboard
-    private var currentFrontApp: String?
-    private var appUsageToday: [String: TimeInterval] = [:]
-    private var lastAppCheckTime: Date = Date()
+    // App tracking and dashboard (now handled by UsageTrackingManager)
     private var dashboardTimer: Timer?
     private var hasShownDashboardToday: Bool = false
     
     // Break and continuous session tracking
     private var breaksTaken: [SessionRecord] = []
-    private var continuousWorkSessions: [SessionRecord] = []
-    private var currentContinuousSessionStart: Date?
     private var isCurrentlyOnBreak: Bool = false
     private var breakStartTime: Date?
-    private var longestContinuousSession: TimeInterval = 0
     private var totalBreakTime: TimeInterval = 0
     
     // Configuration
@@ -68,8 +62,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     
     // Persistent storage
     private var usageHistory: UsageHistory = UsageHistory()
-    private var currentDayCallTime: TimeInterval = 0
-    private var callStartTime: Date?
     private var deepFocusSessionStartTime: Date?
     
     // Break timer system
@@ -127,6 +119,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         HotkeyManager.shared.delegate = self
         AppSwitchingManager.shared.delegate = self
         PersistenceManager.shared.delegate = self
+        UsageTrackingManager.shared.delegate = self
 
         // Status bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -239,14 +232,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         print("📋 FastSwitch: Menú creado con \(menu.items.count) items")
         
         // Start usage tracking
-        startUsageTracking()
-        
-        // Initialize app tracking
-        currentFrontApp = getCurrentFrontApp()
-        lastAppCheckTime = Date()
-        
-        // Initialize session tracking
-        currentContinuousSessionStart = Date()
+        UsageTrackingManager.shared.startTracking()
         
         // Load usage history
         usageHistory = PersistenceManager.shared.loadUsageHistory()
@@ -444,7 +430,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         
         // Update menu bar and menu items to show focus status
         updateStatusBarForFocus()
-        updateMenuItems(sessionDuration: getCurrentSessionDuration())
+        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
     }
     
     private func enableDeepFocus() {
@@ -711,7 +697,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
         
         // Update menu to show break timer status
-        updateMenuItems(sessionDuration: getCurrentSessionDuration())
+        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
     }
     
     private func stopBreakTimer() {
@@ -722,7 +708,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         print("⏹️ FastSwitch: Timer de descanso detenido")
         
         // Update menu
-        updateMenuItems(sessionDuration: getCurrentSessionDuration())
+        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
     }
     
     private func getBreakTimerRemaining() -> TimeInterval {
@@ -899,7 +885,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     
     private func shouldAskEnergyCheck(at now: Date, hour: Int) -> Bool {
         // Ask about energy when in long sessions without breaks
-        let sessionDuration = getCurrentSessionDuration()
+        let sessionDuration = UsageTrackingManager.shared.getCurrentSessionDuration()
         guard sessionDuration >= 7200 else { return false } // 2+ hours
         
         if let lastCheck = lastEnergyCheck {
@@ -1911,13 +1897,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
         
         // Update today's data with current session info
-        todayData.totalSessionTime = getCurrentSessionDuration()
-        todayData.appUsage = appUsageToday
+        todayData.totalSessionTime = UsageTrackingManager.shared.getCurrentSessionDuration()
+        todayData.appUsage = UsageTrackingManager.shared.getAppUsageToday()
         todayData.breaksTaken = breaksTaken
-        todayData.continuousWorkSessions = continuousWorkSessions
-        todayData.longestContinuousSession = longestContinuousSession
+        todayData.continuousWorkSessions = UsageTrackingManager.shared.getContinuousWorkSessions()
+        todayData.longestContinuousSession = UsageTrackingManager.shared.getLongestContinuousSession()
         todayData.totalBreakTime = totalBreakTime
-        todayData.callTime = currentDayCallTime
+        todayData.callTime = UsageTrackingManager.shared.getCurrentDayCallTime()
         
         // Add current deep focus session if active
         if isDeepFocusEnabled, let startTime = deepFocusStartTime {
@@ -1925,14 +1911,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             todayData.deepFocusSessions.append(SessionRecord(start: startTime, duration: duration))
         }
         
-        // Add current continuous session if active
-        if let sessionStart = currentContinuousSessionStart {
-            let duration = Date().timeIntervalSince(sessionStart)
-            todayData.continuousWorkSessions.append(SessionRecord(start: sessionStart, duration: duration))
-            if duration > todayData.longestContinuousSession {
-                todayData.longestContinuousSession = duration
-            }
-        }
+        // Continuous sessions are now handled by UsageTrackingManager
         
         usageHistory.dailyData[todayKey] = todayData
         if let todayData = usageHistory.dailyData[getTodayKey()] {
@@ -1944,25 +1923,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     
     // MARK: - Usage Tracking
     
-    private func startUsageTracking() {
-        sessionStartTime = Date()
-        lastActivityTime = Date()
-        sentNotificationIntervals.removeAll()
-        
-        print("🚀 FastSwitch: Iniciando seguimiento de uso")
-        print("⏰ FastSwitch: Intervalo de verificación: \(checkInterval)s")
-        print("📊 FastSwitch: Intervalos de notificación: \(notificationIntervals.map { Int($0) })s")
-        
-        usageTimer = Timer.scheduledTimer(withTimeInterval: checkInterval, repeats: true) { [weak self] _ in
-            self?.checkUserActivity()
-        }
-    }
     
-    private func stopUsageTracking() {
-        print("🛑 FastSwitch: Deteniendo seguimiento de uso")
-        usageTimer?.invalidate()
-        usageTimer = nil
-    }
     
     private func checkUserActivity() {
         let idleTime = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .mouseMoved)
@@ -1983,7 +1944,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
         
         let effectiveIdleThreshold = isInCall ? callIdleThreshold : idleThreshold
-        let sessionDuration = getCurrentSessionDuration()
+        let sessionDuration = UsageTrackingManager.shared.getCurrentSessionDuration()
         
         print("🔍 FastSwitch: Idle tiempo: \(Int(minIdleTime))s (mouse: \(Int(idleTime))s, teclado: \(Int(keyboardIdleTime))s)")
         print("📞 FastSwitch: En llamada: \(isInCall) (manual: \(manualCallToggle))")
@@ -2026,7 +1987,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
                 startBreak()
             }
             
-            updateStatusBarTitle(sessionDuration: getCurrentSessionDuration())
+            updateStatusBarTitle(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
         }
         
         // Periodic data saving (every minute when user is active)
@@ -2153,10 +2114,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         }
     }
     
-    private func getCurrentSessionDuration() -> TimeInterval {
-        guard let startTime = sessionStartTime else { return 0 }
-        return Date().timeIntervalSince(startTime)
-    }
     
     private func checkForBreakNotification(sessionDuration: TimeInterval) {
         guard notificationsEnabled else { 
@@ -2272,7 +2229,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         stickyBreakStartTime = Date()
         
         // primer envío inmediato con ID fijo
-        sendBreakNotification(sessionDuration: getCurrentSessionDuration(),
+        sendBreakNotification(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration(),
                               overrideIdentifier: stickyBreakNotificationID)
         
         stickyBreakTimer = Timer.scheduledTimer(withTimeInterval: stickyRepeatInterval,
@@ -2287,7 +2244,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
             }
             
             print("🔁 Reenviando break sticky…")
-            self.sendBreakNotification(sessionDuration: self.getCurrentSessionDuration(),
+            self.sendBreakNotification(sessionDuration: self.UsageTrackingManager.shared.getCurrentSessionDuration(),
                                        overrideIdentifier: self.stickyBreakNotificationID)
         }
     }
@@ -2307,24 +2264,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         return frontApp.bundleIdentifier ?? frontApp.localizedName ?? "Unknown"
     }
     
-    private func trackAppUsage() {
-        let now = Date()
-        let timeElapsed = now.timeIntervalSince(lastAppCheckTime)
-        
-        // Only track if less than 10 seconds elapsed (avoid huge gaps from sleep/inactive periods)
-        if timeElapsed < 10, let currentApp = currentFrontApp {
-            appUsageToday[currentApp, default: 0] += timeElapsed
-        }
-        
-        // Update current front app
-        let newFrontApp = getCurrentFrontApp()
-        if newFrontApp != currentFrontApp {
-            print("📱 FastSwitch: App changed: \(currentFrontApp ?? "nil") → \(newFrontApp ?? "nil")")
-            currentFrontApp = newFrontApp
-        }
-        
-        lastAppCheckTime = now
-    }
     
     // MARK: - Break and Session Tracking
     private func startBreak() {
@@ -2387,12 +2326,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
         var dashboard = "📊 Daily Usage Report - \(today)\n\n"
         
         // Total session time
-        let totalSession = getCurrentSessionDuration()
+        let totalSession = UsageTrackingManager.shared.getCurrentSessionDuration()
         let sessionHours = Int(totalSession) / 3600
         let sessionMinutes = Int(totalSession) % 3600 / 60
         dashboard += "⏰ Total Work Session: \(sessionHours)h \(sessionMinutes)m\n\n"
         
         // App usage breakdown
+        let appUsageToday = UsageTrackingManager.shared.getAppUsageToday()
         if !appUsageToday.isEmpty {
             dashboard += "📱 App Usage Breakdown:\n"
             
@@ -2955,8 +2895,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     }
     
     @objc private func toggleCallStatus() {
-        manualCallToggle.toggle()
-        print("🔄 FastSwitch: Toggle manual de llamada: \(manualCallToggle)")
+        let newStatus = UsageTrackingManager.shared.toggleCallStatus()
+        manualCallToggle = newStatus
+        print("🔄 FastSwitch: Toggle manual de llamada: \(newStatus)")
     }
     
     @objc private func toggleDeepFocusFromMenu() {
@@ -2978,17 +2919,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NotificationManagerDelegate,
     */
     
     @objc private func resetSession() {
-        sessionStartTime = Date()
-        totalActiveTime = 0
+        UsageTrackingManager.shared.resetSession()
         sentNotificationIntervals.removeAll()
         
-        // Reset break and session tracking
+        // Reset break and session tracking (break logic will be moved to BreakReminderManager)
         breaksTaken.removeAll()
-        continuousWorkSessions.removeAll()
-        currentContinuousSessionStart = Date()
         isCurrentlyOnBreak = false
         breakStartTime = nil
-        longestContinuousSession = 0
         totalBreakTime = 0
         
         print("🔄 FastSwitch: Sesión y tracking de descansos reiniciados")
@@ -3856,5 +3793,36 @@ extension AppDelegate: PersistenceManagerDelegate {
             title: "💾 Data Error",
             message: "Failed to save/load data: \(error.localizedDescription)"
         )
+    }
+}
+
+// MARK: - UsageTrackingManagerDelegate
+
+extension AppDelegate: UsageTrackingManagerDelegate {
+    func usageTrackingManager(_ manager: UsageTrackingManager, didUpdateSessionDuration duration: TimeInterval) {
+        // Update status bar with current session duration
+        updateStatusBarTitle(sessionDuration: duration)
+    }
+    
+    func usageTrackingManager(_ manager: UsageTrackingManager, didDetectActivity isActive: Bool) {
+        // Handle activity detection for break management
+        if !isActive && !isCurrentlyOnBreak {
+            startBreak()
+        }
+    }
+    
+    func usageTrackingManager(_ manager: UsageTrackingManager, didUpdateAppUsage appUsage: [String: TimeInterval]) {
+        // App usage tracking updated - no immediate action needed
+        // Data will be retrieved when saving today's data
+    }
+    
+    func usageTrackingManager(_ manager: UsageTrackingManager, didDetectCallStatus inCall: Bool) {
+        // Update UI state for call detection
+        manualCallToggle = inCall
+        
+        // Update menu items to reflect call status
+        updateMenuItems(sessionDuration: UsageTrackingManager.shared.getCurrentSessionDuration())
+        
+        print("📞 FastSwitch: Call status changed: \(inCall)")
     }
 }
