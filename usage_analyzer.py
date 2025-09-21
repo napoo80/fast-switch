@@ -156,18 +156,32 @@ def analyze_wellness_data(daily_data):
         
         # Exercise data
         exercise_data = wellness.get('exerciseRecords', [])
+        # Normalize exercise intensity values (support int or string)
+        for ex in exercise_data:
+            if isinstance(ex.get('intensity'), int):
+                ex['intensityLabel'] = {1: 'light', 2: 'moderate', 3: 'intense'}.get(ex['intensity'], 'none')
+            else:
+                ex['intensityLabel'] = ex.get('type', 'none')
         exercise_records.extend(exercise_data)
         
-        # Energy checks
-        energy_data = wellness.get('energyChecks', [])
-        energy_records.extend(energy_data)
+        # Energy checks: support both 'energyChecks' (analyzer schema) and 'energyLevels' (app schema)
+        raw_energy = wellness.get('energyChecks')
+        if raw_energy is None:
+            # Map app schema to analyzer expectations
+            raw_energy = []
+            for rec in wellness.get('energyLevels', []):
+                mapped = dict(rec)
+                # Analyzer expects 'energyLevel'
+                mapped['energyLevel'] = rec.get('level', rec.get('energyLevel', 0))
+                raw_energy.append(mapped)
+        energy_records.extend(raw_energy)
         
-        # Daily reflections
-        if wellness.get('dailyReflection'):
+        # Daily reflections live at top-level in app schema
+        if day_data.get('dailyReflection'):
             reflection_days += 1
-            reflection = wellness['dailyReflection']
+            reflection = day_data['dailyReflection']
             mood_records.append({
-                'mood': reflection.get('mood', ''),
+                'mood': reflection.get('mood', reflection.get('dayType', '')),
                 'energy': reflection.get('energyLevel', 0),
                 'stress': reflection.get('stressLevel', 0),
                 'quality': reflection.get('workQuality', '')
@@ -211,8 +225,10 @@ def analyze_wellness_data(daily_data):
         # Exercise intensity distribution
         intensity_count = {'none': 0, 'light': 0, 'moderate': 0, 'intense': 0}
         for record in exercise_records:
-            exercise_type = record.get('type', 'none')
-            intensity_count[exercise_type] = intensity_count.get(exercise_type, 0) + 1
+            label = record.get('intensityLabel') or record.get('type') or 'none'
+            if isinstance(label, str):
+                label = label.lower()
+            intensity_count[label] = intensity_count.get(label, 0) + 1
         
         print(f"   Intensity Distribution:")
         for intensity, count in intensity_count.items():
@@ -284,10 +300,18 @@ def analyze_correlations(daily_data):
         # Daily totals
         mate_total = sum(record.get('mateAmount', 0) for record in wellness.get('mateAndSugarRecords', []))
         exercise_done = any(record.get('done', False) for record in wellness.get('exerciseRecords', []))
-        avg_energy = sum(record.get('energyLevel', 0) for record in wellness.get('energyChecks', [])) / max(len(wellness.get('energyChecks', [])), 1)
+        # Average energy: support both analyzer and app schema
+        energy_list = wellness.get('energyChecks')
+        if energy_list is None:
+            energy_list = []
+            for rec in wellness.get('energyLevels', []):
+                energy_list.append({'energyLevel': rec.get('level', 0)})
+        avg_energy = sum(record.get('energyLevel', 0) for record in energy_list) / max(len(energy_list), 1)
         
-        reflection = wellness.get('dailyReflection', {})
-        mood_score = {'productive': 4, 'balanced': 3, 'tired': 2, 'stressed': 1}.get(reflection.get('mood', 'balanced'), 3)
+        # Reflection at top-level; map dayType → mood
+        reflection = day_data.get('dailyReflection', {})
+        mood_val = reflection.get('mood', reflection.get('dayType', 'balanced'))
+        mood_score = {'productive': 4, 'balanced': 3, 'tired': 2, 'stressed': 1}.get(mood_val, 3)
         
         correlations.append({
             'session_time': session_time,

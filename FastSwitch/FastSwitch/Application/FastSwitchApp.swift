@@ -5,6 +5,7 @@ import SwiftUI
 struct FastSwitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     var body: some Scene {
-        Settings { EmptyView() } // sin ventanas
+        Settings { PreferencesView() } // Simple preferences window
     }
 }
+

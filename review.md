@@ -1,144 +1,153 @@
-**FastSwitch — Technical & Product Review**
+# FastSwitch — Codebase Review and Implementation Plan
 
-- Repo snapshot: SwiftUI macOS menu bar app with Carbon hotkeys, AppleScript automations, wellness/usage tracking, DASUNG e‑ink helpers, and a Python usage analyzer.
-- Key files: `FastSwitch/FastSwitch/AppDelegate.swift` (very large, multi‑domain), `DasungRefresher.swift`, `DasungDDC.swift`, `WallpaperPhraseManager.swift`, `NSScreen+IDs.swift`, tests scaffolding, `usage_analyzer.py`, docs.
-- Note: The refactor plan file is `refactor.md` (not refartor.md).
+## Summary
 
-**Executive Summary**
-- Strong foundation with a clear “instant app switching” core and thoughtful wellness/analytics features. However, the current architecture centralizes too many responsibilities in `AppDelegate.swift`, leading to maintainability and testability issues.
-- The Python analyzer and the Swift persistence schema are out of sync (key names, structures, and date encoding), which will break analytics unless aligned.
-- Product-wise, defaults are developer-centric; a basic Preferences UI and onboarding would lift UX greatly. Internationalization and clearer privacy messaging are important if sharing beyond your own machine.
+FastSwitch is a macOS menu bar app for instant app switching via F‑keys, with added ergonomics: usage tracking, break reminders, Deep Focus, wellness prompts, motivational phrases, and optional e‑ink monitor helpers (Dasung/Paperlike). The project recently introduced a modular manager architecture (NotificationManager, HotkeyManager, AppSwitchingManager, PersistenceManager, UsageTrackingManager, BreakReminderManager, WellnessManager, MenuBarManager, DeepFocusManager) but AppDelegate still holds significant legacy logic, leading to duplication and mixed responsibilities. Documentation is good and includes testing guides and a Python usage analyzer.
 
-**Technical Findings**
-- Architecture & Code Organization
-  - `AppDelegate.swift` mixes 10+ domains (hotkeys, usage tracking, notifications, deep focus, wellness, DASUNG, wallpaper, export, menu UI…). This violates SRP and complicates changes, debugging, and tests.
-  - You already extracted focused helpers (e.g., `DasungRefresher`, `DasungDDC`, `WallpaperPhraseManager`, `NSScreen+IDs`). Extending this pattern across the rest of the domains will meaningfully simplify the codebase.
-  - Many AppleScript automation blocks are brittle (UI scripting System Settings, Slack). Expect OS/app version drift to break flows; consider fallback paths and capability checks.
+## Current Status (high level)
 
-- Persistence & Data Model
-  - JSON schema mismatch vs analyzer:
-    - Swift uses `WellnessMetrics { mateRecords, exerciseRecords, energyLevels, stressLevels, moodChecks }` and top-level `dailyReflection` in each day; Python expects `wellnessMetrics` containing `mateAndSugarRecords`, `exerciseRecords`, `energyChecks`, and `dailyReflection` inside wellness.
-    - Field name mismatches: analyzer expects `timestamp`, `mateAmount`, `sugarLevel`; Swift uses `time`, `thermosCount`, and no sugar metric field.
-  - Date encoding: Swift `JSONEncoder` default encodes `Date` as numeric; analyzer assumes ISO 8601 strings. Set `JSONEncoder.dateEncodingStrategy = .iso8601` and `JSONDecoder.dateDecodingStrategy = .iso8601` (and update existing data or support legacy decoding).
-  - Consider adding `schemaVersion` in the exported JSON. Provide a compatibility exporter (v1 vs v2) or a migration layer in the analyzer.
-  - `UserDefaults` for all usage history will grow and is not ideal for larger datasets. Suggest on-disk JSON (by day) or a lightweight store (e.g., one file per day or SQLite/CoreData). Keep `UserDefaults` for settings only.
+- Architecture
+  - Managers exist for major domains; singletons with delegate protocols and os.Logger.
+  - AppDelegate wires everything, but also re‑implements logic that belongs in managers (Deep Focus, wellness questions, sticky notifications, mate plan, etc.).
+  - Menu bar is feature‑rich and configurable; wallpaper phrases feature is conditionally disabled.
+- Persistence
+  - Daily JSON files in Application Support (good). Legacy UserDefaults migration supported.
+  - CodingKeys partially aligned to analyzer schema (mate records), but not fully (see gaps below).
+- Tooling
+  - Xcode project; minimal unit/UI tests; no CI; no SwiftLint/SwiftFormat config.
+- External deps
+  - Uses AppleScript automation; optional Homebrew tools (m1ddc, displayplacer, ddcctl).
+- Docs
+  - README, TESTING_GUIDE, QUICK_TEST_SETUP, USAGE_ANALYZER are detailed and helpful.
 
-- Notifications & Timers
-  - Multiple timers (usage, dashboard, focus, wellness) run on the main runloop. Good use of `[weak self]` in most places; verify all timers are invalidated on teardown toggles to avoid leaks.
-  - You rely heavily on notifications as UI; banner overload is possible. Consider grouping or rate limiting; use `interruptionLevel` judiciously.
-  - Ensure notification category registration happens before requests and is idempotent.
+## Key Findings & Suggestions
 
-- Hotkeys & Shortcuts
-  - Carbon hotkeys are fine for macOS; mapping is hard-coded. Suggest a simple Preferences UI to edit bundle IDs and shortcut behaviors, with validation and a “Detect bundle ID…” helper.
-  - App-specific double‑tap actions are helpful; add a per‑app configuration surface.
+- Responsibility duplication in AppDelegate
+  - Several workflows (Deep Focus, wellness prompts, break reminders, notifications) are implemented in both AppDelegate and their respective managers. This increases complexity and risk of drift.
+  - Suggestion: finish the migration. AppDelegate should primarily coordinate managers and react to delegates; business logic and timers should live inside managers.
 
-- External Tools (ddcctl, displayplacer, m1ddc)
-  - Nice fallbacks in `DasungRefresher` if tools aren’t found. Expose detection status + quick test actions in a submenu.
-  - The `displayplacer` profiles are hard-coded with Spanish identifiers (`ochocientosPorSeiscientos` etc.). Rename to English and let users configure per-display profiles.
+- Analyzer schema mismatch (wellness)
+  - Analyzer expects: `wellnessMetrics.energyChecks` and `dailyReflection` fields like `mood`, `energyLevel`, `stressLevel`, `workQuality`.
+  - App exports: `energyLevels` (not `energyChecks`) and `DailyReflection` with `dayType`, `journalEntry`, etc.
+  - Suggestion: either (a) adapt app export keys to the analyzer’s expected schema, or (b) update the analyzer to read the app’s schema. Pick one and make both sides consistent.
 
-- AppleScript Integrations
-  - Toggling Slack DND via UI scripting is fragile. Prefer Slack AppleScript dictionary/API where possible; otherwise wrap with robust existence/timeouts and silent failures.
-  - System Settings UI scripting to change ICC profile will be brittle across OS updates; label this experimental and keep a safe fallback.
+- Hardcoded paths and machine‑specific values
+  - `AppDelegate.loadPhrasesFromFile` tries an absolute path `/Users/gaston/.../phrases.json`.
+  - Dasung UUIDs are hardcoded; user‑specific.
+  - Suggestion: remove absolute paths. Load phrases from the app bundle (Resource) and/or from `~/Library/Application Support/FastSwitch/phrases.json`. Make Dasung UUIDs configurable via preferences or a plist.
 
-- Code Quality & Style
-  - Mix of English/Spanish identifiers and logs; good for local dev, but standardize for collaborators or add i18n.
-  - Many print logs; consider `OSLog` with categories and log levels. Provide a “Debug logging” toggle.
-  - Centralize constants (keys, sound names, category IDs) and reuse enums for tags/IDs.
+- Testing defaults leak into production
+  - Default `NotificationMode` is `.testing` and several testing timers are enabled by default via `setNotificationIntervalTest()` and DEBUG hooks.
+  - Suggestion: gate testing helpers behind `#if DEBUG` and ensure production defaults use reasonable intervals (e.g., 60–90 min).
 
-- Testing & CI
-  - Tests are placeholders. After refactor into managers, add unit tests where boundaries are clear (hotkeys routing, persistence encode/decode, usage session accounting, notification scheduling decisions). Keep UI tests thin.
-  - Add a simple GitHub Actions workflow (build + unit tests) if you plan to share/collab.
+- Inconsistent logging
+  - Mix of `print` and `Logger`.
+  - Suggestion: standardize on os.Logger across the codebase.
 
-- Security & Privacy
-  - Clear privacy posture is needed: all data appears local; say so explicitly in README and first‑run. Provide: disable analytics, delete data, and export.
-  - Align bundle identifiers in docs: README uses `Bandonea.FastSwitch` in defaults/tccutil, while Info.plist uses `$(PRODUCT_BUNDLE_IDENTIFIER)`. Pick one (e.g., `com.bandonea.FastSwitch`) and update docs/scripts consistently.
+- Internationalization and copy
+  - Mixed Spanish/English strings in menus, logs, and notifications.
+  - Suggestion: introduce `Localizable.strings` and choose a default locale; keep English/Spanish variants as needed.
 
-- Distribution
-  - README suggests copying Debug builds. If you plan to share, add an Ad‑Hoc/Developer ID signed “Release” and optional notarization notes. If App Store is a goal, plan entitlements/sandbox impacts (Apple Events, etc.).
+- Entitlements and permissions
+  - Info.plist contains NSAppleEventsUsageDescription (good). Entitlements file is empty.
+  - Suggestion: verify if the app needs additional entitlements (hardened runtime, incoming/outgoing connections not needed now). Keep Accessibility as TCC prompt only (correct today). Ensure Notification permission request flows through NotificationManager (already in place).
 
-**Analyzer Alignment (Critical)**
-- Current analyzer expects:
-  - `dailyData: { "YYYY-MM-DD": { ... } }`
-  - Inside each day:
-    - `totalSessionTime`, `totalBreakTime`, `callTime`, `deepFocusSessions`, `continuousWorkSessions`, `appUsage`.
-    - `wellnessMetrics` object including `mateAndSugarRecords` (with `timestamp`, `mateAmount`, `sugarLevel`), `exerciseRecords` (with `done`, `duration`, `type`), and `energyChecks` (with `energyLevel`).
-    - `dailyReflection` under wellness.
-- Swift currently stores:
-  - `DailyUsageData` with `wellnessMetrics { mateRecords, exerciseRecords, energyLevels, stressLevels, moodChecks }` and `dailyReflection` at the day root.
-- Fix options:
-  - Change Swift model names to match analyzer (preferred), add missing fields (e.g., sugar), and move `dailyReflection` inside `wellnessMetrics`. Set JSON encoder to ISO 8601. Or…
-  - Update `usage_analyzer.py` to match the current Swift schema (rename keys, ignore missing sugar for now, accept numeric dates). Given the analyzer is documented as part of the product, aligning the app’s exported JSON to the docs is cleaner.
+- Preferences surface
+  - Many features are only toggled via code or hidden menu switches (e.g., wellness enable/disable, mate tracking, Deep Focus duration, wallpaper phrases, Dasung behavior).
+  - Suggestion: add a small Preferences window (SwiftUI) to manage feature flags, intervals, phrase source, Dasung settings.
 
-**Product Findings**
-- Onboarding & Permissions
-  - First-run should show a small walkthrough: why Accessibility/Automation/Notifications are needed, how to enable “Use F1, F2… as standard function keys”, and how to customize mappings.
+- Scripts and operations
+  - `scripts/clean.sh` is empty; README contains manual cleanup steps.
+  - Suggestion: implement `scripts/clean.sh` with those steps to streamline resets.
 
-- Preferences
-  - Add a “Preferences” window with:
-    - F‑key → app mapping editor (add/remove rows, detect bundle ID from running apps).
-    - Notification intervals (45/60/90), Deep Focus default duration, toggle wellness questions, dashboard time.
-    - DASUNG settings (enable rotation hop, display UUID selection, test buttons).
-    - Language (English/Spanish), logging level, and data controls (export/delete).
+- Tests and CI
+  - Tests are placeholder only. No CI.
+  - Suggestion: add lightweight unit tests for managers (pure logic), and a GitHub Actions workflow to build/test on macOS runner.
 
-- Wellness System
-  - Great ideas (mate reduction, exercise, energy checks) but make it opt‑in per category. For non‑mate users, generalize to “caffeine” or “hydration only”.
-  - Limit notification frequency and provide a “quiet hours” schedule.
+- Wallpaper feature flags
+  - Duplicate constants (`DISABLE_WALLPAPER`, `WALLPAPER_KILL_SWITCH`) across files.
+  - Suggestion: centralize feature flags in a single config (e.g., `AppConfig.swift`) and reflect state in menu.
 
-- UX & Feedback
-  - Notifications carry a lot of UI. Consider a lightweight popover for dashboard/reflection to reduce cognitive load.
-  - Use consistent language and tone; add i18n for strings.
+## Proposed TODO (prioritized)
 
-- Reports & Insights
-  - Daily/weekly/yearly reports delivered as notifications are clever; add a “Reports…” menu item that opens a popover/window with the same info and export controls.
-  - Provide basic charts (even ASCII/monospace in a popover), and a “copy to clipboard” option.
+1) Complete manager migration, slim AppDelegate
+- Remove duplicated wellness, Deep Focus, and break logic from AppDelegate.
+- Route all scheduling and notification creation through the relevant managers.
+- Keep AppDelegate as orchestrator: set delegates, handle menu actions, persist high‑level state.
 
-- Documentation
-  - README mixes English and Spanish and includes local paths; streamline and separate developer vs user docs. Fix bundle ID references; consolidate reset steps into a script (the included `scripts/clean.sh` is empty).
+2) Align wellness export schema with analyzer
+- Option A (recommended): Update app’s CodingKeys/structures to export:
+  - `wellnessMetrics.energyChecks` instead of `energyLevels`.
+  - Extend `DailyReflection` to include `mood`, `energyLevel`, `stressLevel`, `workQuality` fields used by the analyzer.
+- Option B: Update `usage_analyzer.py` to read current app keys: `energyLevels` and `dailyReflection.dayType` etc., mapping to the expected semantics.
 
-**Refactor Plan Review (refactor.md)**
-- Strengths
-  - Clear problem statement and domains identified; good modular target (Managers/Coordinators/Models) and incremental commits. Success metrics are concrete.
-  - Aligns with `DasungDDC`/`DasungRefresher` separation already in code.
+3) Remove absolute paths; use standard locations
+- Phrases: load from Bundle resource if present; otherwise from `~/.fast-switch/phrases.json`.
+- Add a Preferences control to choose a custom phrases file.
 
-- Gaps & Risks
-  - Data migration not detailed: moving model files and changing coding keys will affect decoding previous `UserDefaults` blobs. Add a migration plan (schema version, graceful decode with both old/new keys).
-  - Analyzer/schema alignment not called out; add a task to unify keys + date strategy and update docs.
-  - Coordinators sound good; consider whether you really need both, or if a single “AppCoordinator” with feature sub‑managers is enough to avoid orchestration creep.
-  - Dependency injection: spell out how managers obtain dependencies (protocols + simple container), and keep side‑effects out of initializers to simplify tests.
+4) Production defaults and testing gates
+- Default `NotificationMode` to `.interval60` (or `.interval90`).
+- Wrap testing timers and `startWellnessTestingMode()` behind `#if DEBUG` with a single toggle.
 
-- Suggested Adjustments
-  - Phase 1: Extract Models with explicit `CodingKeys` matching analyzer (or vice versa), set `JSONEncoder/Decoder` to ISO 8601, add `schemaVersion`.
-  - Phase 2: Extract `NotificationCenter` wrapper first (NotificationManager) because many managers depend on it; then Hotkey/AppSwitching; then Usage/Breaks.
-  - Phase 3: PersistenceManager writes one JSON per day under `~/Library/Application Support/FastSwitch/data/2025-09-07.json` to avoid large blobs in `UserDefaults`.
-  - Phase 4: MenuBarManager builds the NSMenu and exposes minimal update methods; all strings via a Strings file for i18n.
-  - Testing: Add unit tests as each manager is extracted. Start with encode/decode tests for models, then usage timing edge cases.
+5) Centralize configuration
+- Add `AppConfig.swift` with feature flags (wallpaper, wellness default on/off, testing mode availability).
+- Replace duplicate constants (`DISABLE_WALLPAPER`, `WALLPAPER_KILL_SWITCH`) with a single source of truth.
 
-**Quick Wins (High ROI)**
-- Set `JSONEncoder/Decoder` to ISO 8601; add `CodingKeys` aligning with analyzer; add `schemaVersion`.
-- Fix bundle ID references in README, scripts, and code examples (choose `com.bandonea.FastSwitch`).
-- Add a minimal Preferences window for F‑key mapping and notification mode.
-- Rename Spanish code identifiers within code to English (public API, constants) for consistency; keep localized user-facing strings.
-- Add a “Disable Wellness” master toggle and default it off for new users.
-- Replace print logs with `OSLog` categories; add a debug logging toggle.
-- Fill `scripts/clean.sh` with the reset steps currently embedded in README.
+6) Logging standardization
+- Replace `print` with structured `Logger` in AppDelegate and other files for consistency.
 
-**Next Steps (Proposed Order)**
-- Week 1
-  - Align exported JSON schema + date strategy; update analyzer accordingly; write a short “Data Schema” doc.
-  - Extract Models + NotificationManager; add unit tests for encode/decode and notification category setup.
-  - Preferences window: mapping + intervals; persist settings separately from usage data.
-- Week 2
-  - Extract HotkeyManager and AppSwitchingManager; keep behavior identical; unit test routing logic.
-  - Extract UsageTrackingManager + BreakReminderManager; add tests for idle thresholds + intervals.
-- Week 3
-  - Extract WellnessManager; gate features behind prefs; add i18n groundwork.
-  - Slim AppDelegate to setup + DI; add CI workflow for build/tests.
+7) Preferences UI (SwiftUI)
+- Tabs: General (F‑key mappings read‑only link), Focus (durations), Wellness (enable, sub‑features, intervals), Notifications (interval presets), Phrases (source), Displays (Dasung UUID/strategy).
+- Persist via UserDefaults.
 
-**Notable Issues to Track**
-- Analyzer vs app schema mismatch (blocking analytics).
-- Empty `scripts/clean.sh` vs detailed reset steps in README.
-- Mixed languages in code and docs; fix bundle ID references everywhere.
-- Reliance on brittle AppleScript UI scripting; ensure fallbacks and safe failures.
+8) Dasung/Paperlike robustness
+- Make known UUIDs a user‑editable list; add a “Detect” button that logs available display UUIDs.
+- Expose “Use rotation hop” toggle and DDC index in Preferences.
 
-If you want, I can: (a) align the exported JSON schema + analyzer, (b) scaffold the Preferences UI for mappings/notifications, or (c) start the refactor by extracting Models and NotificationManager.
+9) scripts/clean.sh
+- Implement cleanup script mirroring README “Limpieza completa” steps safely (idempotent, with checks).
+
+10) Internationalization
+- Extract user‑facing strings into `Localizable.strings` (es, en). Keep logs in English, or gate by locale.
+
+11) Tests and CI (incremental)
+- Add unit tests for: `UsageTrackingManager` session math, `PersistenceManager` round‑trip encode/decode, `WellnessManager` schedule progression.
+- Add GitHub Actions macOS workflow: build + test.
+
+12) Documentation polish
+- Update README “Reset permissions” and “Pre‑installed apps” as code blocks.
+- Add a small “Privacy” note describing local‑only data storage and export behavior.
+
+## Concrete Implementation Notes
+
+- Phrases loading
+  - Bundle: `Bundle.main.url(forResource: "phrases", withExtension: "json")`
+  - App configs: `~/.fast-switch/phrases.json` (create folder if missing).
+
+- Wellness schema
+  - If changing app side, extend `DailyReflection` to map analyzer fields, e.g.:
+    - `mood` (map from `dayType`), `energyLevel` (optional numeric), `stressLevel` (optional numeric), `workQuality` (derive from mood or add new user input).
+  - Or, change analyzer to use existing keys: `energyLevels` list and `dailyReflection.dayType`.
+
+- AppDelegate simplification
+  - Replace direct UNNotification code with calls into NotificationManager.
+  - Remove timers and sticky notification loops now owned by managers.
+  - Keep delegate implementations to route user actions and persist via PersistenceManager.
+
+- Feature flags
+  - Introduce `AppConfig.swift` with static lets or computed properties backed by UserDefaults.
+
+## Risks / Considerations
+
+- AppleScript automation and Accessibility need clear permission flows; ensure first‑run UX is smooth.
+- m1ddc/displayplacer availability varies; guards are present, but expose options in Preferences and surface errors via notifications.
+- Changing wellness schema may invalidate older exports; consider versioning in exported JSON (`schemaVersion`) and documenting changes.
+
+## Quick Wins (this week)
+
+- Remove absolute phrases path; fall back to Bundle/AppSupport.
+- Default NotificationMode to `.interval60` outside DEBUG.
+- Replace remaining `print` calls in managers/AppDelegate with `Logger`.
+- Implement `scripts/clean.sh` based on README steps.
+- Update analyzer or app schema for `energyChecks` vs `energyLevels` to unlock wellness insights.
 

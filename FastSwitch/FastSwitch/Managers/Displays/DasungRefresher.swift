@@ -2,8 +2,6 @@ import Cocoa
 import Foundation
 import CoreGraphics
 
-
-
 /// Refresher para DASUNG: intenta DDC (m1ddc) → displayplacer → flash negro/blanco.
 final class DasungRefresher {
 
@@ -37,20 +35,12 @@ final class DasungRefresher {
     
     var useRotationHop = false
 
-
     /// Alias para compatibilidad con código viejo que usa `dasungDisplayID`.
     var dasungDisplayID: String {
         get { dasungDisplayUUID }
         set { _detectedUUID = newValue }
     }
 
-    // ————— API pública —————
-    //func refreshPaperlike() {
-    //    if refreshViaDDC() { return }
-    //    if refreshViaDisplayplacerRotationHop() { return }
-    //    refreshViaFlashFallback()
-    //}
-    
     func refreshPaperlike() {
         if refreshViaDDC() { return }
         // ✅ La rotación solo corre si vos la habilitás explícitamente

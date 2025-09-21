@@ -16,6 +16,8 @@ protocol WellnessManagerDelegate: AnyObject {
     func wellnessManager(_ manager: WellnessManager, didUpdateMateProgress thermos: Int, target: Int)
     func wellnessManager(_ manager: WellnessManager, didAdvancePhase newPhase: Int)
     func wellnessManager(_ manager: WellnessManager, didSaveDailyReflection reflection: DailyReflection)
+    func wellnessManager(_ manager: WellnessManager, didRecordExercise record: ExerciseRecord)
+    func wellnessManager(_ manager: WellnessManager, didRecordWellnessCheck check: WellnessCheck)
 }
 
 // MARK: - WellnessManager
@@ -347,6 +349,17 @@ final class WellnessManager: NSObject {
         guard isExerciseTrackingEnabled && isWellnessEnabled else { return }
         
         logger.info("🏃 Recording exercise: \(type) for \(Int(duration))min")
+        let intensityValue: Int = {
+            switch intensity.lowercased() {
+            case "light": return 1
+            case "moderate": return 2
+            case "intense": return 3
+            default: return 0
+            }
+        }()
+        let done = duration > 0 && type.lowercased() != "none"
+        let record = ExerciseRecord(time: Date(), done: done, duration: Int(duration), type: type, intensity: intensityValue)
+        delegate?.wellnessManager(self, didRecordExercise: record)
     }
     
     private func askExerciseQuestion() {
@@ -403,6 +416,8 @@ final class WellnessManager: NSObject {
         }
         
         logger.info("😊 Recording wellness check: \(type) level \(level)")
+        let check = WellnessCheck(time: Date(), type: type, level: level, context: context)
+        delegate?.wellnessManager(self, didRecordWellnessCheck: check)
     }
     
     private func askMateQuestion() {

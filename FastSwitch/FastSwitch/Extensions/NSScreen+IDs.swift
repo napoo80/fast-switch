@@ -19,3 +19,4 @@ extension NSScreen {
         return CFUUIDCreateString(nil, u) as String
     }
 }
+

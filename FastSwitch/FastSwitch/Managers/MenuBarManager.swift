@@ -8,8 +8,6 @@
 import Cocoa
 import os.log
 
-private let DISABLE_WALLPAPER = true
-
 // MARK: - Menu Tags
 
 private enum MenuTag {
@@ -285,10 +283,8 @@ final class MenuBarManager: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
-        // Wallpaper menu (conditional)
-        if !DISABLE_WALLPAPER {
-            menu.addItem(buildWallpaperSubmenu())
-        }
+        // Wallpaper menu (always available; reflects enabled state)
+        menu.addItem(buildWallpaperSubmenu())
         
         // Configuration submenu
         menu.addItem(buildConfigurationSubmenu())
