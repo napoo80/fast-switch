@@ -501,11 +501,10 @@ final class WellnessManager: NSObject {
             return DailyReflection() // Return empty reflection if disabled
         }
         
-        let reflection = DailyReflection(
-            dayType: mood,
-            journalEntry: notes,
-            completedAt: Date()
-        )
+        var reflection = DailyReflection()
+        reflection.dayType = mood
+        reflection.journalEntry = notes
+        reflection.completedAt = Date()
         
         logger.info("📝 Saved daily reflection: \(mood)")
         delegate?.wellnessManager(self, didSaveDailyReflection: reflection)

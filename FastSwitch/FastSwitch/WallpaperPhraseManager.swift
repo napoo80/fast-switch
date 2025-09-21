@@ -201,8 +201,9 @@ final class WallpaperPhraseManager {
         let name = screen.localizedName.lowercased()
         if name.contains("dasung") || name.contains("paperlike") { return true }
         // Comparar por UUID para máxima precisión
-        if let u = CGDisplayCreateUUIDFromDisplayID(screen.displayID) {
-            let str = (CFUUIDCreateString(nil, u as! CFUUID) as String)
+        if let unmanaged = CGDisplayCreateUUIDFromDisplayID(screen.displayID) {
+            let uuid = unmanaged.takeRetainedValue()
+            let str = CFUUIDCreateString(nil, uuid) as String
             if str.caseInsensitiveCompare(DasungRefresher.shared.dasungDisplayID) == .orderedSame {
                 return true
             }
@@ -214,4 +215,3 @@ final class WallpaperPhraseManager {
     }
 
 }
-

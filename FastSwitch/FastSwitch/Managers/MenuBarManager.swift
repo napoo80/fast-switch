@@ -57,13 +57,6 @@ protocol MenuBarManagerDelegate: AnyObject {
     func menuBarManager(_ manager: MenuBarManager, setWallpaperInterval minutes: Int)
 }
 
-enum NotificationMode {
-    case testing
-    case interval45
-    case interval60
-    case interval90
-    case disabled
-}
 
 // MARK: - Localized Strings
 

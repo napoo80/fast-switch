@@ -361,14 +361,15 @@ final class BreakReminderManager: NSObject {
     
     /// Toggle sticky reminders on/off
     func toggleStickyReminders() -> Bool {
-        stickyRemindersEnabled.toggle()
-        logger.info("🔔 Sticky reminders: \(stickyRemindersEnabled ? "ON" : "OFF")")
+        self.stickyRemindersEnabled.toggle()
+        let status = self.stickyRemindersEnabled ? "ON" : "OFF"
+        logger.info("🔔 Sticky reminders: \(status)")
         
-        if !stickyRemindersEnabled {
-            stopStickyBreakReminders()
+        if !self.stickyRemindersEnabled {
+            self.stopStickyBreakReminders()
         }
         
-        return stickyRemindersEnabled
+        return self.stickyRemindersEnabled
     }
     
     // MARK: - Analytics

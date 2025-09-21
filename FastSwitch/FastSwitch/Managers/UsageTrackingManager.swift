@@ -7,6 +7,7 @@
 
 import Foundation
 import ApplicationServices
+import AppKit
 import os.log
 
 // MARK: - UsageTrackingManager Protocol
@@ -193,7 +194,7 @@ final class UsageTrackingManager: NSObject {
         
         if isActive {
             // Check for mouse/keyboard activity
-            if let eventSource = CGEventSource(stateID: .hidSystemState) {
+            if CGEventSource(stateID: .hidSystemState) != nil {
                 let secondsSinceLastEvent = CGEventSource.secondsSinceLastEventType(
                     .hidSystemState,
                     eventType: .mouseMoved

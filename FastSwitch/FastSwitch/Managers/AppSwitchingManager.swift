@@ -142,10 +142,10 @@ final class AppSwitchingManager: NSObject {
         if option  { mods.append("option down") }
         if control { mods.append("control down") }
         
-        let usingPart = mods.isEmpty ? "" : " using {\\(mods.joined(separator: ", "))}"
+        let usingPart = mods.isEmpty ? "" : " using {\(mods.joined(separator: ", "))}"
         let script = """
         tell application id "com.apple.systemevents"
-            keystroke "\\(letter)"\\(usingPart)
+            keystroke "\(letter)"\(usingPart)
         end tell
         """
         

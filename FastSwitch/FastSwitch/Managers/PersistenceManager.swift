@@ -68,11 +68,11 @@ final class PersistenceManager: NSObject {
     private func createDataDirectoryIfNeeded() {
         do {
             try FileManager.default.createDirectory(
-                at: dataDirectoryURL,
+                at: self.dataDirectoryURL,
                 withIntermediateDirectories: true,
                 attributes: nil
             )
-            logger.info("✅ Created data directory: \(dataDirectoryURL.path)")
+            logger.info("✅ Created data directory: \(self.dataDirectoryURL.path)")
         } catch {
             logger.error("❌ Failed to create data directory: \(error.localizedDescription)")
         }
@@ -134,7 +134,9 @@ final class PersistenceManager: NSObject {
             logger.error("❌ Failed to read daily files: \(error.localizedDescription)")
         }
         
-        return UsageHistory(dailyData: dailyData)
+        var history = UsageHistory()
+        history.dailyData = dailyData
+        return history
     }
     
     private func migrateFromUserDefaults() -> UsageHistory {
@@ -226,8 +228,7 @@ final class PersistenceManager: NSObject {
         // Create export data with schema version
         let exportData: [String: Any] = [
             "schemaVersion": "1.0",
-            "exportDate": encoder.dateEncodingStrategy == .iso8601 ? 
-                ISO8601DateFormatter().string(from: Date()) : Date().timeIntervalSince1970,
+            "exportDate": ISO8601DateFormatter().string(from: Date()),
             "dailyData": history.dailyData
         ]
         
